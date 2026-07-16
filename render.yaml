@@ -1,0 +1,52 @@
+# Render Blueprint — PhotoEditor (editor.herooflegend.com)
+# Deploy: https://dashboard.render.com/blueprints
+services:
+  - type: web
+    name: photoeditor
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /healthz
+    disk:
+      name: photoeditor-data
+      mountPath: /app/data
+      sizeGB: 10
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: AUTH_ENABLED
+        value: "true"
+      - key: APP_NAME
+        value: PhotoEditor
+      - key: FRONTEND_URL
+        value: https://editor.herooflegend.com
+      - key: CORS_ORIGINS
+        value: https://editor.herooflegend.com
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: UVICORN_WORKERS
+        value: "2"
+      - key: DISABLE_DOCS
+        value: "false"
+      # Email — prefer Resend SMTP (same pattern as CRM) or Cloudflare Email Sending
+      - key: EMAIL_FROM
+        value: noreply@herooflegend.com
+      - key: EMAIL_FROM_NAME
+        value: PhotoEditor
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        value: noreply@herooflegend.com
+      - key: SMTP_TLS
+        value: "true"
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false

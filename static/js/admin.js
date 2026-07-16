@@ -40,6 +40,22 @@
     } else {
       banner.hidden = true;
     }
+    try {
+      const em = await api("/api/auth/email-status");
+      const el = $("#emailStatus");
+      if (el) {
+        if (em.configured) {
+          el.className = "auth-alert ok";
+          el.textContent = `Email ready · transport: ${em.transport} · from: ${em.from || "—"}`;
+        } else {
+          el.className = "auth-alert error";
+          el.textContent =
+            "Email not configured — invites will only show a copyable link. Set SMTP_* or Cloudflare Email env vars for editor.herooflegend.com.";
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     return me;
   }
 

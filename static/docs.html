@@ -51,15 +51,22 @@
         <section id="overview">
           <h2>Overview</h2>
           <p>
-            PhotoEditor is a local web workbench for <strong>classical image denoise</strong> and
-            <strong>technical quality reporting</strong>. It does not use generative AI to redraw
+            PhotoEditor is a web workbench for <strong>classical image denoise</strong> and
+            <strong>technical quality reporting</strong>. Production host:
+            <strong>https://editor.herooflegend.com</strong>. It does not use generative AI to redraw
             photos. Filters run through OpenCV (non-local means, bilateral, Gaussian, median, or a
             hybrid). By default, <strong>resolution is preserved</strong>.
+          </p>
+          <p>
+            Access is behind <strong>CRM-style login</strong> (email invite + password). Each profile
+            has isolated history and library. Admins can invite users and view other profiles in the
+            workspace. Invite mail uses SMTP (e.g. Resend) or Cloudflare Email Sending.
           </p>
           <p>
             The left panel holds controls. The center shows the image (with zoom). The right panel
             shows expandable metric categories. Hover any control’s <span class="tip-badge">?</span>
             in the editor for an ELI5 tip; this page is the full technical reference.
+            Deploy notes: see the repository <code>docs/deployment.md</code>.
           </p>
         </section>
 

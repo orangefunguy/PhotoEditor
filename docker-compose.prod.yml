@@ -1,0 +1,31 @@
+# Local production-like run or VPS deploy
+services:
+  web:
+    build: .
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+      AUTH_ENABLED: "true"
+      FRONTEND_URL: ${FRONTEND_URL:-https://editor.herooflegend.com}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    volumes:
+      - pe-data:/app/data
+      - pe-uploads:/app/uploads
+      - pe-outputs:/app/outputs
+      - pe-library:/app/library
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  pe-data:
+  pe-uploads:
+  pe-outputs:
+  pe-library:

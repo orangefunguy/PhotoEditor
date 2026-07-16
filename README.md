@@ -34,6 +34,24 @@ Repository: [github.com/orangefunguy/PhotoEditor](https://github.com/orangefungu
 
 ---
 
+## Production (editor.herooflegend.com)
+
+PhotoEditor is packaged for **https://editor.herooflegend.com** (same Hero of Legend DNS style as CRM).
+
+| Piece | Setup |
+|-------|--------|
+| Host | Render Docker (`render.yaml` / `Dockerfile`) or `docker compose -f docker-compose.prod.yml` |
+| Auth | Login required; first user is admin; email invites for teammates |
+| Email | **Resend SMTP** or **Cloudflare Email Sending** (see `.env.production.example`) |
+| Guide | **[docs/deployment.md](docs/deployment.md)** |
+
+```bash
+# Production-like local run
+cp .env.production.example .env.production
+# set SMTP_PASSWORD / Cloudflare secrets
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
 ## Quick start (local host)
 
 ### Requirements

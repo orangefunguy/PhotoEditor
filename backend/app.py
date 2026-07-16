@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -18,6 +20,7 @@ from .auth import AuthContext, get_optional_auth, require_auth
 from .auth_db import init_db
 from .auth_routes import router as auth_router
 from .denoise import DenoiseControls, denoise_image
+from .email_service import email_status
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "static"
@@ -27,14 +30,28 @@ OUTPUTS = ROOT / "outputs"
 UPLOADS.mkdir(exist_ok=True)
 OUTPUTS.mkdir(exist_ok=True)
 
+APP_ENV = os.getenv("APP_ENV", "development")
+DISABLE_DOCS = os.getenv("DISABLE_DOCS", "false").lower() in ("1", "true", "yes")
+
 app = FastAPI(
     title="PhotoEditor",
     description="Technical image analysis and controllable denoise (authenticated)",
-    version="2.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/openapi.json",
+    version="2.1.0",
+    docs_url=None if DISABLE_DOCS else "/api/docs",
+    redoc_url=None if DISABLE_DOCS else "/api/redoc",
+    openapi_url=None if DISABLE_DOCS else "/openapi.json",
 )
+
+# Same-origin deploy (editor.herooflegend.com) does not need CORS; allow override for split hosting.
+_cors = os.getenv("CORS_ORIGINS", "").strip()
+if _cors:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in _cors.split(",") if o.strip()],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 app.include_router(auth_router)
 
@@ -69,10 +86,18 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "app": "PhotoEditor",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "auth": True,
+        "env": APP_ENV,
+        "email": email_status(),
         "time": time.time(),
     }
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    """Load balancer liveness probe."""
+    return {"status": "ok"}
 
 
 def _report_summary(report: dict[str, Any] | None) -> dict[str, Any] | None:

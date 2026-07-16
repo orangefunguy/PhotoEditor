@@ -12,6 +12,8 @@ from .auth import (
     SESSION_COOKIE,
     VIEW_AS_COOKIE,
     AuthContext,
+    cookie_samesite,
+    cookie_secure,
     create_admin_user,
     create_invite,
     create_session,
@@ -26,6 +28,7 @@ from .auth import (
     verify_password,
 )
 from .auth_db import db
+from .email_service import email_status
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -63,7 +66,20 @@ def _set_session_cookie(response: Response, token: str) -> None:
         key=SESSION_COOKIE,
         value=token,
         httponly=True,
-        samesite="lax",
+        samesite=cookie_samesite(),
+        secure=cookie_secure(),
+        max_age=authmod.SESSION_DAYS * 86400,
+        path="/",
+    )
+
+
+def _set_view_as_cookie(response: Response, user_id: str) -> None:
+    response.set_cookie(
+        key=VIEW_AS_COOKIE,
+        value=user_id,
+        httponly=True,
+        samesite=cookie_samesite(),
+        secure=cookie_secure(),
         max_age=authmod.SESSION_DAYS * 86400,
         path="/",
     )
@@ -79,6 +95,8 @@ def auth_status(ctx: AuthContext | None = Depends(get_optional_auth)) -> dict[st
         "actor": ctx.actor.public_dict() if ctx else None,
         "view_as_user_id": ctx.view_as_user_id if ctx else None,
         "viewing_as_other": bool(ctx and ctx.view_as_user_id),
+        "email": email_status(),
+        "frontend_url": authmod.frontend_url(),
     }
 
 
@@ -155,7 +173,7 @@ def invite(
     ctx: AuthContext = Depends(require_admin),
 ) -> dict[str, Any]:
     try:
-        user, link = create_invite(
+        user, link, email_result = create_invite(
             email=str(body.email),
             role=body.role,
             workspace_id=ctx.actor.workspace_id,
@@ -165,14 +183,26 @@ def invite(
         raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+    if email_result.ok and email_result.transport != "log":
+        message = f"Invite email sent to {user.email} via {email_result.transport}."
+    elif email_result.ok:
+        message = (
+            "Invite created. Email is in log-only mode — copy the link below "
+            "(or check data/invite_links.log)."
+        )
+    else:
+        message = (
+            f"Invite created but email failed ({email_result.message}). "
+            "Copy the link below and share it manually."
+        )
+
     return {
         "status": "ok",
         "user": user.public_dict(),
         "invite_link": link,
-        "message": (
-            "Invite created. If SMTP is not configured, the link was printed to the server log "
-            "and written to data/invite_links.log."
-        ),
+        "email": email_result.as_dict(),
+        "message": message,
     }
 
 
@@ -234,14 +264,7 @@ def view_as(
         raise HTTPException(404, "User not found in your workspace.")
     if not target.is_active:
         raise HTTPException(400, "User is inactive.")
-    response.set_cookie(
-        key=VIEW_AS_COOKIE,
-        value=target.id,
-        httponly=True,
-        samesite="lax",
-        max_age=authmod.SESSION_DAYS * 86400,
-        path="/",
-    )
+    _set_view_as_cookie(response, target.id)
     return {
         "status": "ok",
         "view_as": target.public_dict(),
@@ -260,3 +283,9 @@ def clear_view_as(
         "message": "Returned to your own profile.",
         "user": ctx.actor.public_dict(),
     }
+
+
+@router.get("/email-status")
+def get_email_status(ctx: AuthContext = Depends(require_admin)) -> dict[str, Any]:
+    """Admin: whether outbound email is configured for production invites."""
+    return email_status()

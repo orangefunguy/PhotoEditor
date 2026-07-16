@@ -15,10 +15,8 @@ import hashlib
 import hmac
 import os
 import secrets
-import smtplib
 import time
 from dataclasses import dataclass
-from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +24,7 @@ import bcrypt
 from fastapi import Cookie, Depends, Header, HTTPException, status
 
 from .auth_db import db, init_db, row_to_dict  # noqa: F401 — init_db used by callers
+from .email_service import send_invite_email, send_welcome_email
 
 SESSION_COOKIE = "pe_session"
 VIEW_AS_COOKIE = "pe_view_as"
@@ -47,6 +46,19 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 AUTH_ENABLED = _env_bool("AUTH_ENABLED", True)
+APP_ENV = os.getenv("APP_ENV", "development")
+
+
+def cookie_secure() -> bool:
+    """Use Secure cookies in production HTTPS (editor.herooflegend.com)."""
+    if _env_bool("COOKIE_SECURE", False):
+        return True
+    return APP_ENV == "production"
+
+
+def cookie_samesite() -> str:
+    # Lax works for same-site top-level navigations (invite links)
+    return os.getenv("COOKIE_SAMESITE", "lax")
 
 
 @dataclass
@@ -137,7 +149,12 @@ def hash_token(raw: str) -> str:
 
 
 def frontend_url() -> str:
-    return os.getenv("FRONTEND_URL", "http://127.0.0.1:8000").rstrip("/")
+    default = (
+        "https://editor.herooflegend.com"
+        if APP_ENV == "production"
+        else "http://127.0.0.1:8000"
+    )
+    return os.getenv("FRONTEND_URL", default).rstrip("/")
 
 
 def user_count() -> int:
@@ -301,7 +318,7 @@ def create_invite(
     role: str,
     workspace_id: str,
     invited_by: AuthUser,
-) -> tuple[AuthUser, str]:
+):
     if not invited_by.is_admin:
         raise PermissionError("Only admins can invite users.")
     if role not in ("admin", "user"):
@@ -348,8 +365,8 @@ def create_invite(
     user = get_user_by_id(uid)
     assert user
     link = f"{frontend_url()}/invite?token={raw_token}"
-    _deliver_invite(email_n, link, invited_by.email)
-    return user, link
+    email_result = _deliver_invite(email_n, link, invited_by.email)
+    return user, link, email_result
 
 
 def complete_invite(
@@ -395,6 +412,10 @@ def complete_invite(
         conn.close()
     user = get_user_by_id(uid)
     assert user
+    try:
+        send_welcome_email(to=user.email, display_name=user.display_name)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[PhotoEditor] welcome email skipped: {exc}")
     return user
 
 
@@ -444,41 +465,16 @@ def set_user_active(user_id: str, active: bool, actor: AuthUser) -> AuthUser:
     return user
 
 
-def _deliver_invite(email: str, link: str, invited_by: str) -> None:
-    """Send invite email if SMTP configured; always log the link (CRM local-dev friendly)."""
+def _deliver_invite(email: str, link: str, invited_by: str):
+    """Send invite email; always log the link for support / local dev."""
     INVITE_LOG.parent.mkdir(parents=True, exist_ok=True)
     line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} invite for {email} by {invited_by}: {link}\n"
     with INVITE_LOG.open("a", encoding="utf-8") as f:
         f.write(line)
     print(f"[PhotoEditor invite] {email} → {link}")
-
-    host = os.getenv("SMTP_HOST")
-    if not host:
-        return
-    port = int(os.getenv("SMTP_PORT", "587"))
-    user = os.getenv("SMTP_USER", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    sender = os.getenv("SMTP_FROM", user or "photoeditor@localhost")
-    use_tls = _env_bool("SMTP_TLS", True)
-
-    msg = EmailMessage()
-    msg["Subject"] = "You're invited to PhotoEditor"
-    msg["From"] = sender
-    msg["To"] = email
-    msg.set_content(
-        f"You have been invited to PhotoEditor by {invited_by}.\n\n"
-        f"Accept your invite and set your password:\n{link}\n\n"
-        f"This link expires in {INVITE_DAYS} days.\n"
+    return send_invite_email(
+        to=email, link=link, invited_by=invited_by, days=INVITE_DAYS
     )
-    try:
-        with smtplib.SMTP(host, port, timeout=20) as smtp:
-            if use_tls:
-                smtp.starttls()
-            if user:
-                smtp.login(user, password)
-            smtp.send_message(msg)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[PhotoEditor invite] SMTP failed: {exc} (link still in {INVITE_LOG})")
 
 
 async def get_optional_auth(
