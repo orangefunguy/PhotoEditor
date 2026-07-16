@@ -323,14 +323,22 @@ function rewriteOriginResponse(response, originBase, incoming) {
   outHeaders.delete("content-encoding");
   outHeaders.delete("content-length");
 
-  // Don't let browsers/CF cache error or auth-sensitive HTML/API
+  // Cache policy: HTML/API/auth never cached; JS/CSS revalidate quickly
+  // (avoids stale editor after deploys behind Cloudflare)
   const ct = (outHeaders.get("Content-Type") || "").toLowerCase();
+  const path = incoming.pathname || "";
   if (
     response.status >= 400 ||
     ct.includes("text/html") ||
     ct.includes("application/json")
   ) {
     outHeaders.set("Cache-Control", "no-store");
+  } else if (
+    path.startsWith("/static/") ||
+    ct.includes("javascript") ||
+    ct.includes("text/css")
+  ) {
+    outHeaders.set("Cache-Control", "public, max-age=60, must-revalidate");
   }
 
   return new Response(response.body, {
