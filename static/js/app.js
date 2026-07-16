@@ -68,6 +68,15 @@
     zoomFit: $("#zoomFit"),
     zoom100: $("#zoom100"),
     btnDenoise: $("#btnDenoise"),
+    applyProgress: $("#applyProgress"),
+    applyProgressLabel: $("#applyProgressLabel"),
+    applyProgressPct: $("#applyProgressPct"),
+    applyProgressFill: $("#applyProgressFill"),
+    applyProgressBar: $("#applyProgressBar"),
+    previewProcessing: $("#previewProcessing"),
+    previewProcessingTitle: $("#previewProcessingTitle"),
+    previewProcessingFill: $("#previewProcessingFill"),
+    previewProcessingPct: $("#previewProcessingPct"),
     btnAnalyze: $("#btnAnalyze"),
     btnDownload: $("#btnDownload"),
     btnReset: $("#btnReset"),
@@ -2093,22 +2102,109 @@
     setStatus("Analysis complete · session cached");
   }
 
+  /** Simulated staged progress while waiting on /api/denoise (no server stream yet). */
+  let _progressTimer = null;
+  let _progressValue = 0;
+
+  function setProgressUI(pct, label) {
+    const p = Math.max(0, Math.min(100, Math.round(pct)));
+    _progressValue = p;
+    const fillW = `${p}%`;
+    if (els.applyProgressFill) els.applyProgressFill.style.width = fillW;
+    if (els.applyProgressPct) els.applyProgressPct.textContent = `${p}%`;
+    if (els.applyProgressBar) els.applyProgressBar.setAttribute("aria-valuenow", String(p));
+    if (els.applyProgressLabel && label) els.applyProgressLabel.textContent = label;
+    if (els.previewProcessingFill) els.previewProcessingFill.style.width = fillW;
+    if (els.previewProcessingPct) els.previewProcessingPct.textContent = `${p}%`;
+    if (els.previewProcessingTitle && label) els.previewProcessingTitle.textContent = label;
+  }
+
+  function startApplyProgress() {
+    stopApplyProgress(false);
+    _progressValue = 0;
+    if (els.applyProgress) els.applyProgress.hidden = false;
+    if (els.previewProcessing) els.previewProcessing.hidden = false;
+    if (els.btnDenoise) {
+      els.btnDenoise.disabled = true;
+      els.btnDenoise.classList.add("is-processing");
+      els.btnDenoise.dataset.idleLabel = els.btnDenoise.dataset.idleLabel || "Apply";
+      els.btnDenoise.innerHTML = `<span class="spinner" style="display:inline-block;margin-right:0.4rem;vertical-align:middle;width:12px;height:12px;border-width:2px"></span>Applying…`;
+    }
+    if (els.btnAnalyze) els.btnAnalyze.disabled = true;
+    setProgressUI(2, "Preparing image…");
+    setStatus("Applying filter…", "busy");
+
+    // Ease toward ~92% while the request runs; finish jumps to 100% on complete
+    const started = Date.now();
+    _progressTimer = setInterval(() => {
+      const elapsed = (Date.now() - started) / 1000;
+      // asymptotic approach: fast early, slower later
+      let target;
+      let label;
+      if (elapsed < 0.4) {
+        target = 8 + elapsed * 40;
+        label = "Preparing image…";
+      } else if (elapsed < 1.2) {
+        target = 28 + (elapsed - 0.4) * 25;
+        label = "Running denoise filter…";
+      } else if (elapsed < 4) {
+        target = 48 + (1 - Math.exp(-(elapsed - 1.2) / 2.2)) * 35;
+        label = "Smoothing noise…";
+      } else {
+        target = 83 + (1 - Math.exp(-(elapsed - 4) / 6)) * 9;
+        label = "Computing metrics…";
+      }
+      // never go backwards; cap before completion
+      const next = Math.min(92, Math.max(_progressValue, target));
+      setProgressUI(next, label);
+    }, 120);
+  }
+
+  function stopApplyProgress(success) {
+    if (_progressTimer) {
+      clearInterval(_progressTimer);
+      _progressTimer = null;
+    }
+    if (success) {
+      setProgressUI(100, "Done");
+    }
+    if (els.btnDenoise) {
+      els.btnDenoise.classList.remove("is-processing");
+      els.btnDenoise.innerHTML = els.btnDenoise.dataset.idleLabel || "Apply";
+      els.btnDenoise.disabled = !(state.file || state.jobId || state.sourceUrl);
+    }
+    if (els.btnAnalyze) els.btnAnalyze.disabled = !state.file;
+    // brief hold at 100% then hide
+    const hideDelay = success ? 450 : 0;
+    setTimeout(() => {
+      if (els.applyProgress) els.applyProgress.hidden = true;
+      if (els.previewProcessing) els.previewProcessing.hidden = true;
+      setProgressUI(0, "Processing…");
+    }, hideDelay);
+  }
+
   async function runDenoise() {
     if (!state.file && !state.jobId) return;
-    setStatus("Denoising… this may take a few seconds for large images", "busy");
-    els.btnDenoise.disabled = true;
+    startApplyProgress();
     const controls = collectControls();
     const fd = new FormData();
     if (state.jobId) fd.append("job_id", state.jobId);
     if (state.file) fd.append("file", state.file);
     fd.append("controls_json", JSON.stringify(controls));
     try {
-      const r = await fetch("/api/denoise", { method: "POST", body: fd });
+      setProgressUI(Math.max(_progressValue, 18), "Uploading & starting filter…");
+      const r = await fetch("/api/denoise", {
+        method: "POST",
+        body: fd,
+        credentials: "same-origin",
+      });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
         throw new Error(typeof err.detail === "string" ? err.detail : r.statusText);
       }
+      setProgressUI(Math.max(_progressValue, 88), "Receiving result…");
       const data = await r.json();
+      setProgressUI(94, "Updating preview…");
       state.jobId = data.job_id;
       state.report = data.report;
       state.sourceUrl = data.source_url + `?t=${Date.now()}`;
@@ -2131,6 +2227,7 @@
       const strength = controls.strength_pct;
       const summary = `PSNR ${fmtNum(psnr)} dB · HF ${fmtNum(hf)}% · ${algo} ${strength}%`;
 
+      setProgressUI(97, "Saving history…");
       // Capture blobs for undo / repository
       let sourceBlob = state.file;
       if (!sourceBlob && Store) sourceBlob = await Store.blobFromUrl(state.sourceUrl);
@@ -2153,11 +2250,11 @@
         report: data.report,
       });
       await saveToLibrary();
+      stopApplyProgress(true);
       setStatus(`Done · ${summary} · saved to history & library`);
     } catch (e) {
+      stopApplyProgress(false);
       setStatus(e.message || String(e), "error");
-    } finally {
-      els.btnDenoise.disabled = false;
     }
   }
 

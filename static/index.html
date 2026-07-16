@@ -229,8 +229,18 @@
               data-tip="apply"
               disabled
             >
-              Apply denoise
+              Apply
             </button>
+          </div>
+          <div class="apply-progress" id="applyProgress" hidden aria-live="polite">
+            <div class="apply-progress-head">
+              <span class="apply-hourglass" aria-hidden="true">⏳</span>
+              <span class="apply-progress-label" id="applyProgressLabel">Processing…</span>
+              <span class="apply-progress-pct" id="applyProgressPct">0%</span>
+            </div>
+            <div class="apply-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="applyProgressBar">
+              <div class="apply-progress-fill" id="applyProgressFill"></div>
+            </div>
           </div>
           <div class="btn-row">
             <button type="button" class="btn btn-block" id="btnAnalyze" data-tip="analyze" disabled>
@@ -321,6 +331,16 @@
             <div class="zoom-meta" id="zoomMeta">Size —</div>
           </div>
           <div class="preview-stage" id="previewStage">
+            <div class="preview-processing" id="previewProcessing" hidden>
+              <div class="preview-processing-card">
+                <div class="preview-processing-hourglass" aria-hidden="true">⏳</div>
+                <div class="preview-processing-title" id="previewProcessingTitle">Applying filter…</div>
+                <div class="preview-processing-track">
+                  <div class="preview-processing-fill" id="previewProcessingFill"></div>
+                </div>
+                <div class="preview-processing-pct" id="previewProcessingPct">0%</div>
+              </div>
+            </div>
             <div class="preview-scroll" id="previewScroll">
               <div class="preview-canvas" id="previewCanvas">
                 <div class="single-view" id="singleView">

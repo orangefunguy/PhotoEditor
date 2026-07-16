@@ -39,7 +39,7 @@
     gaussSigma:
       "Width of the simple Gaussian blur. Higher = softer. 0 = auto from Strength.",
     apply:
-      "Run the denoise with your current settings and update the before/after preview plus metrics.",
+      "Apply the current filter settings. You’ll see a progress bar while the image is processing.",
     analyze: "Measure the loaded image again without cleaning it.",
     download: "Save the cleaned photo to your computer as a JPEG.",
     reset: "Put all sliders and options back to defaults. Your image stays loaded.",

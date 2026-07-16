@@ -279,11 +279,12 @@
         <section id="actions">
           <h2>Actions</h2>
           <div class="docs-card" id="tool-apply">
-            <h3>Apply denoise</h3>
-            <p class="eli5"><strong>ELI5:</strong> Run the cleaner with your settings and show before/after.</p>
+            <h3>Apply</h3>
+            <p class="eli5"><strong>ELI5:</strong> Press Apply to run the cleaner. An hourglass and progress bar show while it works.</p>
             <p>
-              <code>POST /api/denoise</code> with controls JSON + job id or file. Returns report +
-              output JPEG. Pushes an undo step and updates the library.
+              <code>POST /api/denoise</code> with controls JSON + job id or file. The UI shows staged
+              progress (preparing → filter → metrics → done). Returns report + output JPEG, then
+              pushes an undo step and updates the library.
             </p>
           </div>
           <div class="docs-card" id="tool-analyze">
