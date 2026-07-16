@@ -228,18 +228,44 @@
           </div>
         </div>
         <div class="panel-body">
-          <div class="preview-stage" id="previewStage">
-            <div class="single-view" id="singleView">
-              <div class="placeholder" id="placeholder">
-                <div>Load an image to inspect metrics and denoise</div>
-                <div style="margin-top: 0.5rem"><code>/api/analyze · /api/denoise</code></div>
-              </div>
-              <img id="previewImg" alt="Preview" hidden />
+          <div class="preview-toolbar" id="zoomToolbar" aria-label="Zoom controls">
+            <div class="zoom-controls">
+              <button type="button" class="btn zoom-btn" id="zoomOut" title="Zoom out (scroll down)" aria-label="Zoom out">−</button>
+              <label class="zoom-pct-wrap" title="Display size as % of native image pixels (100% = 1:1)">
+                <input
+                  type="number"
+                  id="zoomPctInput"
+                  class="zoom-pct-input"
+                  min="5"
+                  max="800"
+                  step="1"
+                  value="100"
+                  aria-label="Zoom percentage"
+                />
+                <span class="zoom-pct-suffix">%</span>
+              </label>
+              <button type="button" class="btn zoom-btn" id="zoomIn" title="Zoom in (scroll up)" aria-label="Zoom in">+</button>
+              <button type="button" class="btn zoom-btn zoom-btn-wide" id="zoomFit" title="Fit image in preview">Fit</button>
+              <button type="button" class="btn zoom-btn zoom-btn-wide" id="zoom100" title="100% — one screen pixel per image pixel">1:1</button>
             </div>
-            <div class="compare-wrap" id="compareWrap">
-              <img id="compareBefore" alt="Before" />
-              <img id="compareAfter" class="after" alt="After" />
-              <div class="compare-slider" id="compareSlider"></div>
+            <div class="zoom-meta" id="zoomMeta">Size —</div>
+          </div>
+          <div class="preview-stage" id="previewStage">
+            <div class="preview-scroll" id="previewScroll">
+              <div class="preview-canvas" id="previewCanvas">
+                <div class="single-view" id="singleView">
+                  <div class="placeholder" id="placeholder">
+                    <div>Load an image to inspect metrics and denoise</div>
+                    <div style="margin-top: 0.5rem"><code>/api/analyze · /api/denoise</code></div>
+                  </div>
+                  <img id="previewImg" alt="Preview" hidden />
+                </div>
+                <div class="compare-wrap" id="compareWrap">
+                  <img id="compareBefore" alt="Before" />
+                  <img id="compareAfter" class="after" alt="After" />
+                  <div class="compare-slider" id="compareSlider"></div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

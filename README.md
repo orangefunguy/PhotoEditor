@@ -25,6 +25,7 @@ Repository: [github.com/orangefunguy/PhotoEditor](https://github.com/orangefungu
 | **Algorithms** | Hybrid (default), Non-local means, Bilateral, Gaussian, Median |
 | **Advanced** | JPEG quality, optional scale, NLM `h`, bilateral σ, Gaussian σ |
 | **Preview** | Source / output / interactive before–after slider |
+| **Zoom** | Preview zoom with **size %** (native pixels), Fit, 1:1, scroll-wheel zoom, drag pan |
 | **Export** | Download denoised JPEG |
 
 ---
@@ -106,7 +107,23 @@ When any target is &gt; 0, the backend **searches strength** to approximate that
 - Scale (only applied if “Preserve resolution” is unchecked)
 - Manual NLM `h`, bilateral σ color/space, Gaussian σ (`0` = auto from strength)
 
-### 3. Apply denoise
+### 3. Zoom the preview
+
+The center panel shows **display size as a percentage of native image pixels** (`100%` = 1 screen pixel per image pixel).
+
+| Control | Action |
+|---------|--------|
+| **− / +** | Zoom out / in by 10% |
+| **% field** | Type an exact size (5–800%) and press Enter |
+| **Fit** | Largest size that fits the preview window |
+| **1:1** | 100% native resolution |
+| **Scroll wheel** | Zoom toward cursor |
+| **Drag** | Pan when the image is larger than the stage |
+| **Double-click** | Toggle Fit ↔ 1:1 |
+
+The toolbar also shows `nativeW×nativeH px → displayW×displayH px · fit|1:1|N%`.
+
+### 4. Apply denoise
 
 - Click **Apply denoise**.
 - Preview switches to **Compare** (drag the slider).
@@ -118,11 +135,11 @@ When any target is &gt; 0, the backend **searches strength** to approximate that
   - Global SSIM-like scores
   - Source and output metric cards
 
-### 4. Download
+### 5. Download
 
 - **Download** saves `photoeditor_<job>_denoised.jpg`.
 
-### 5. Reset
+### 6. Reset
 
 - **Reset controls** restores default sliders without clearing the image.
 

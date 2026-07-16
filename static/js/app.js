@@ -4,6 +4,10 @@
 (() => {
   "use strict";
 
+  const ZOOM_MIN = 5;
+  const ZOOM_MAX = 800;
+  const ZOOM_STEP = 10; // percentage points for ± buttons
+
   const state = {
     file: null,
     jobId: null,
@@ -12,6 +16,12 @@
     sourceMetrics: null,
     report: null,
     view: "source",
+    /** Display size as % of native pixels (100 = 1 CSS px per image px). */
+    zoomPct: 100,
+    /** When true, next layout will set zoom to fit-in-view. */
+    fitOnLoad: true,
+    naturalW: 0,
+    naturalH: 0,
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -33,6 +43,15 @@
     compareBefore: $("#compareBefore"),
     compareAfter: $("#compareAfter"),
     compareSlider: $("#compareSlider"),
+    previewStage: $("#previewStage"),
+    previewScroll: $("#previewScroll"),
+    previewCanvas: $("#previewCanvas"),
+    zoomPctInput: $("#zoomPctInput"),
+    zoomMeta: $("#zoomMeta"),
+    zoomIn: $("#zoomIn"),
+    zoomOut: $("#zoomOut"),
+    zoomFit: $("#zoomFit"),
+    zoom100: $("#zoom100"),
     btnDenoise: $("#btnDenoise"),
     btnAnalyze: $("#btnAnalyze"),
     btnDownload: $("#btnDownload"),
@@ -354,6 +373,157 @@
     }
   }
 
+  // ── Zoom / preview layout ─────────────────────────────────────────
+  function clampZoom(pct) {
+    return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(Number(pct) || 100)));
+  }
+
+  function getActiveImageEl() {
+    if (state.view === "compare" && state.outputUrl) return els.compareBefore;
+    return els.previewImg;
+  }
+
+  function readNaturalSize(img) {
+    if (!img || !img.naturalWidth) return null;
+    return { w: img.naturalWidth, h: img.naturalHeight };
+  }
+
+  function stageContentSize() {
+    const scroll = els.previewScroll;
+    // Usable area for "fit" (padding so image isn't edge-flush)
+    const pad = 16;
+    return {
+      w: Math.max(80, scroll.clientWidth - pad),
+      h: Math.max(80, scroll.clientHeight - pad),
+    };
+  }
+
+  function fitZoomPct() {
+    if (!state.naturalW || !state.naturalH) return 100;
+    const { w, h } = stageContentSize();
+    const sx = (w / state.naturalW) * 100;
+    const sy = (h / state.naturalH) * 100;
+    return clampZoom(Math.min(sx, sy));
+  }
+
+  function displaySize() {
+    const scale = state.zoomPct / 100;
+    return {
+      w: Math.max(1, Math.round(state.naturalW * scale)),
+      h: Math.max(1, Math.round(state.naturalH * scale)),
+    };
+  }
+
+  function updateZoomUi() {
+    if (els.zoomPctInput && document.activeElement !== els.zoomPctInput) {
+      els.zoomPctInput.value = String(state.zoomPct);
+    }
+    const hasImg = state.naturalW > 0 && (state.sourceUrl || state.outputUrl);
+    if (!hasImg) {
+      els.zoomMeta.textContent = "Size —";
+      return;
+    }
+    const d = displaySize();
+    const fit = fitZoomPct();
+    const mode =
+      Math.abs(state.zoomPct - 100) < 0.5
+        ? "1:1"
+        : Math.abs(state.zoomPct - fit) < 0.5
+          ? "fit"
+          : `${state.zoomPct}%`;
+    els.zoomMeta.textContent = `${state.naturalW}×${state.naturalH} px → ${d.w}×${d.h} px · ${mode}`;
+  }
+
+  function applyZoomLayout(opts = {}) {
+    const { keepCenter = true } = opts;
+    const canvas = els.previewCanvas;
+    const scroll = els.previewScroll;
+    const hasImg = state.naturalW > 0 && (state.sourceUrl || state.outputUrl);
+
+    if (!hasImg) {
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      canvas.style.minWidth = "100%";
+      canvas.style.minHeight = "100%";
+      updateZoomUi();
+      return;
+    }
+
+    const cx = scroll.scrollLeft + scroll.clientWidth / 2;
+    const cy = scroll.scrollTop + scroll.clientHeight / 2;
+
+    const d = displaySize();
+    // Canvas at least fills the viewport so small zooms stay centered
+    const cw = Math.max(scroll.clientWidth, d.w);
+    const ch = Math.max(scroll.clientHeight, d.h);
+    canvas.style.width = `${cw}px`;
+    canvas.style.height = `${ch}px`;
+    canvas.style.minWidth = `${cw}px`;
+    canvas.style.minHeight = `${ch}px`;
+
+    // Size the image layers to exact display pixels
+    const layers = [els.singleView, els.compareWrap];
+    layers.forEach((el) => {
+      el.style.width = `${d.w}px`;
+      el.style.height = `${d.h}px`;
+    });
+
+    if (keepCenter && state._lastDispW && state._lastDispH) {
+      const scaleX = d.w / Math.max(1, state._lastDispW);
+      const scaleY = d.h / Math.max(1, state._lastDispH);
+      scroll.scrollLeft = cx * scaleX - scroll.clientWidth / 2;
+      scroll.scrollTop = cy * scaleY - scroll.clientHeight / 2;
+    } else {
+      scroll.scrollLeft = Math.max(0, (cw - scroll.clientWidth) / 2);
+      scroll.scrollTop = Math.max(0, (ch - scroll.clientHeight) / 2);
+    }
+
+    state._lastDispW = d.w;
+    state._lastDispH = d.h;
+    updateZoomUi();
+  }
+
+  function setZoom(pct, { fit = false, center = true } = {}) {
+    state.zoomPct = clampZoom(pct);
+    state.fitOnLoad = fit;
+    if (els.zoomPctInput) els.zoomPctInput.value = String(state.zoomPct);
+    applyZoomLayout({ keepCenter: center });
+  }
+
+  function zoomBy(deltaPct) {
+    setZoom(state.zoomPct + deltaPct, { center: true });
+  }
+
+  function zoomToFit() {
+    if (!state.naturalW) {
+      state.fitOnLoad = true;
+      return;
+    }
+    setZoom(fitZoomPct(), { fit: true, center: false });
+    // Recenter after fit
+    applyZoomLayout({ keepCenter: false });
+  }
+
+  function zoomTo100() {
+    setZoom(100, { center: true });
+  }
+
+  function onImageNaturalReady(img) {
+    const nat = readNaturalSize(img);
+    if (!nat) return;
+    const changed = nat.w !== state.naturalW || nat.h !== state.naturalH;
+    state.naturalW = nat.w;
+    state.naturalH = nat.h;
+    if (state.fitOnLoad || changed) {
+      state.zoomPct = fitZoomPct();
+      state.fitOnLoad = false;
+      if (els.zoomPctInput) els.zoomPctInput.value = String(state.zoomPct);
+      applyZoomLayout({ keepCenter: false });
+    } else {
+      applyZoomLayout({ keepCenter: true });
+    }
+  }
+
   function setPreview() {
     const img = els.previewImg;
     if (!state.sourceUrl && !state.outputUrl) {
@@ -361,6 +531,9 @@
       els.placeholder.hidden = false;
       els.compareWrap.classList.remove("active");
       els.singleView.style.display = "grid";
+      state.naturalW = 0;
+      state.naturalH = 0;
+      applyZoomLayout();
       return;
     }
     els.placeholder.hidden = true;
@@ -368,18 +541,27 @@
     if (state.view === "compare" && state.sourceUrl && state.outputUrl) {
       els.singleView.style.display = "none";
       els.compareWrap.classList.add("active");
+      const onReady = () => onImageNaturalReady(els.compareBefore);
+      els.compareBefore.onload = onReady;
+      els.compareAfter.onload = null;
       els.compareBefore.src = state.sourceUrl;
       els.compareAfter.src = state.outputUrl;
+      if (els.compareBefore.complete && els.compareBefore.naturalWidth) onReady();
       return;
     }
 
     els.compareWrap.classList.remove("active");
     els.singleView.style.display = "grid";
     img.hidden = false;
-    if (state.view === "output" && state.outputUrl) {
-      img.src = state.outputUrl;
-    } else if (state.sourceUrl) {
-      img.src = state.sourceUrl;
+    const url =
+      state.view === "output" && state.outputUrl ? state.outputUrl : state.sourceUrl;
+    const onReady = () => onImageNaturalReady(img);
+    img.onload = onReady;
+    const prev = img.getAttribute("src");
+    if (prev === url && img.complete && img.naturalWidth) {
+      onReady();
+    } else {
+      img.src = url;
     }
   }
 
@@ -412,6 +594,7 @@
     state.sourceUrl = data.preview_url + `?t=${Date.now()}`;
     state.outputUrl = null;
     state.view = "source";
+    state.fitOnLoad = true;
     $$("#viewToggle button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === "source")
     );
@@ -552,6 +735,124 @@
     });
   });
 
+  // Zoom controls
+  els.zoomIn.addEventListener("click", () => zoomBy(ZOOM_STEP));
+  els.zoomOut.addEventListener("click", () => zoomBy(-ZOOM_STEP));
+  els.zoomFit.addEventListener("click", () => zoomToFit());
+  els.zoom100.addEventListener("click", () => zoomTo100());
+  els.zoomPctInput.addEventListener("change", () => {
+    setZoom(els.zoomPctInput.value, { center: true });
+  });
+  els.zoomPctInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      setZoom(els.zoomPctInput.value, { center: true });
+      els.zoomPctInput.blur();
+    }
+  });
+
+  // Trackpad / mouse wheel zoom over preview (pinch-zoom on trackpads often sends ctrl+wheel)
+  els.previewStage.addEventListener(
+    "wheel",
+    (e) => {
+      if (!state.naturalW) return;
+      // Always zoom when over preview (not only with ctrl) so scroll pans only when not zooming.
+      // Use ctrl/meta OR vertical wheel with preventDefault for zoom UX.
+      const zoomGesture = e.ctrlKey || e.metaKey || Math.abs(e.deltaY) > Math.abs(e.deltaX);
+      if (!zoomGesture) return;
+      e.preventDefault();
+      const direction = e.deltaY > 0 ? -1 : 1;
+      // finer steps when pinching
+      const step = e.ctrlKey || e.metaKey ? Math.max(2, Math.round(state.zoomPct * 0.04)) : ZOOM_STEP;
+      const scroll = els.previewScroll;
+      const rect = scroll.getBoundingClientRect();
+      const mx = e.clientX - rect.left + scroll.scrollLeft;
+      const my = e.clientY - rect.top + scroll.scrollTop;
+      const prevW = state._lastDispW || displaySize().w;
+      const prevH = state._lastDispH || displaySize().h;
+      setZoom(state.zoomPct + direction * step, { center: false });
+      const d = displaySize();
+      const scaleX = d.w / Math.max(1, prevW);
+      const scaleY = d.h / Math.max(1, prevH);
+      scroll.scrollLeft = mx * scaleX - (e.clientX - rect.left);
+      scroll.scrollTop = my * scaleY - (e.clientY - rect.top);
+    },
+    { passive: false }
+  );
+
+  // Double-click preview: toggle fit ↔ 100%
+  els.previewStage.addEventListener("dblclick", (e) => {
+    if (!state.naturalW) return;
+    if (e.target.closest(".compare-slider")) return;
+    const fit = fitZoomPct();
+    if (Math.abs(state.zoomPct - fit) < 1) zoomTo100();
+    else zoomToFit();
+  });
+
+  // Drag-to-pan when zoomed larger than stage
+  (function initPan() {
+    const scroll = els.previewScroll;
+    const stage = els.previewStage;
+    let panning = false;
+    let sx = 0;
+    let sy = 0;
+    let sl = 0;
+    let st = 0;
+    stage.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest(".compare-slider")) return;
+      if (!state.naturalW) return;
+      // Only pan if content overflows
+      if (scroll.scrollWidth <= scroll.clientWidth && scroll.scrollHeight <= scroll.clientHeight) {
+        return;
+      }
+      panning = true;
+      stage.classList.add("is-panning", "dragging");
+      sx = e.clientX;
+      sy = e.clientY;
+      sl = scroll.scrollLeft;
+      st = scroll.scrollTop;
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!panning) return;
+      scroll.scrollLeft = sl - (e.clientX - sx);
+      scroll.scrollTop = st - (e.clientY - sy);
+    });
+    window.addEventListener("mouseup", () => {
+      if (!panning) return;
+      panning = false;
+      stage.classList.remove("dragging");
+      // keep is-panning if still overflow for cursor hint
+      if (scroll.scrollWidth <= scroll.clientWidth && scroll.scrollHeight <= scroll.clientHeight) {
+        stage.classList.remove("is-panning");
+      }
+    });
+  })();
+
+  // Keep fit accurate on window resize
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (!state.naturalW) return;
+      // If user was approximately at fit, re-fit; otherwise re-layout at current %
+      const fit = fitZoomPct();
+      if (Math.abs(state.zoomPct - fit) < 2 || state.fitOnLoad) {
+        zoomToFit();
+      } else {
+        applyZoomLayout({ keepCenter: true });
+      }
+      // Update pan cursor
+      const scroll = els.previewScroll;
+      if (scroll.scrollWidth > scroll.clientWidth || scroll.scrollHeight > scroll.clientHeight) {
+        els.previewStage.classList.add("is-panning");
+      } else {
+        els.previewStage.classList.remove("is-panning");
+      }
+    }, 100);
+  });
+
   // Compare slider
   (function initCompareSlider() {
     const wrap = els.compareWrap;
@@ -567,6 +868,7 @@
     slider.addEventListener("mousedown", (e) => {
       dragging = true;
       e.preventDefault();
+      e.stopPropagation();
     });
     window.addEventListener("mouseup", () => {
       dragging = false;
@@ -575,10 +877,14 @@
       if (dragging) setX(e.clientX);
     });
     wrap.addEventListener("click", (e) => {
-      if (e.target === slider) return;
-      setX(e.clientX);
+      if (e.target === slider || e.target.closest(".compare-slider")) return;
+      // Don't steal clicks when user was panning — only direct clicks on images
+      if (e.target.tagName === "IMG") setX(e.clientX);
     });
   })();
+
+  // Initial zoom UI
+  updateZoomUi();
 
   checkHealth();
   setInterval(checkHealth, 15000);
