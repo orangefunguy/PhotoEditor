@@ -30,6 +30,7 @@ tmp/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Large local samples (keep repo lean)
 samples/*
