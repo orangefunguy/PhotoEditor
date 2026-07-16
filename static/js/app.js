@@ -772,53 +772,307 @@
       .replace(/"/g, "&quot;");
   }
 
-  function card(title, rows) {
-    const tr = rows
-      .map(([k, v, cls]) => {
-        const raw = v == null ? "—" : String(v);
-        const isLong = raw.length > 48 || raw.includes("Classical") || raw.includes(" · ");
-        const longCls = isLong ? "is-long" : "";
-        const toggle = isLong
-          ? `<button type="button" class="value-toggle" data-value-toggle>Show more</button>`
-          : "";
-        return `<tr>
-          <th>${escapeHtml(k)}</th>
-          <td class="${cls || ""}">
-            <span class="metric-value-text ${longCls}">${escapeHtml(raw)}</span>
-            ${toggle}
-          </td>
-        </tr>`;
+  /** Remember which metric categories are open across re-renders. */
+  const categoryOpenState = new Map();
+
+  /**
+   * Build an expandable metrics category.
+   * @param {object} opts
+   * @param {string} opts.id stable id for open-state
+   * @param {string} opts.title
+   * @param {string} [opts.summary] short header preview
+   * @param {string} [opts.descriptor] full category description
+   * @param {Array} opts.rows [label, value, class?, description?]
+   * @param {boolean} [opts.defaultOpen]
+   */
+  function metricCategory({ id, title, summary = "", descriptor = "", rows = [], defaultOpen = false }) {
+    const open =
+      categoryOpenState.has(id) ? categoryOpenState.get(id) : defaultOpen;
+    const items = rows
+      .map((row, i) => {
+        const [label, value, cls, description] = row;
+        const raw = value == null || value === "" ? "—" : String(value);
+        const desc = description || METRIC_DESCRIPTORS[label] || "";
+        const long = raw.length > 56 || raw.includes("\n");
+        const rowId = `${id}-r${i}`;
+        return `<div class="metric-row" data-row-id="${escapeHtml(rowId)}">
+          <div class="metric-row-head">
+            <button type="button" class="metric-label-btn" data-desc-toggle aria-expanded="false" title="Show descriptor">
+              <span class="metric-label-text">${escapeHtml(label)}</span>
+              ${desc ? `<span class="metric-info-icon" aria-hidden="true">i</span>` : ""}
+            </button>
+            <button type="button" class="metric-value-btn ${cls || ""} ${long ? "is-clampable" : ""}" data-value-toggle aria-expanded="false" title="Expand full value">
+              <span class="metric-value-text ${long ? "is-clamped" : ""}">${escapeHtml(raw)}</span>
+            </button>
+          </div>
+          ${
+            desc
+              ? `<div class="metric-descriptor" hidden>
+                  <strong>About this metric</strong>
+                  <p>${escapeHtml(desc)}</p>
+                </div>`
+              : ""
+          }
+          ${
+            long
+              ? `<div class="metric-value-full" hidden>
+                  <strong>Full value</strong>
+                  <pre class="metric-value-pre">${escapeHtml(raw)}</pre>
+                </div>`
+              : ""
+          }
+        </div>`;
       })
       .join("");
-    return `<div class="metric-card is-resizable-card">
-      <h3>
-        <span class="card-title-text">${escapeHtml(title)}</span>
-        <button type="button" class="card-expand-btn" data-card-expand title="Expand / resize this card">Resize</button>
-      </h3>
-      <table class="metric-table">${tr}</table>
+
+    return `<details class="metric-category" data-cat-id="${escapeHtml(id)}" ${open ? "open" : ""}>
+      <summary class="metric-category-summary">
+        <span class="cat-chevron" aria-hidden="true"></span>
+        <span class="cat-title">${escapeHtml(title)}</span>
+        ${summary ? `<span class="cat-summary">${escapeHtml(summary)}</span>` : ""}
+        <span class="cat-count">${rows.length}</span>
+      </summary>
+      <div class="metric-category-body">
+        ${
+          descriptor
+            ? `<div class="cat-descriptor">
+                <button type="button" class="cat-descriptor-toggle" data-cat-desc-toggle aria-expanded="false">
+                  About this category
+                </button>
+                <div class="cat-descriptor-body" hidden>
+                  <p>${escapeHtml(descriptor)}</p>
+                </div>
+              </div>`
+            : ""
+        }
+        <div class="metric-rows">${items}</div>
+      </div>
+    </details>`;
+  }
+
+  /** Full plain-language descriptors for metric labels. */
+  const METRIC_DESCRIPTORS = {
+    Method:
+      "Processing approach used for this result. Classical OpenCV denoise preserves resolution by default; it is not a generative re-synthesis of the photo.",
+    Algorithm:
+      "Denoise algorithm selected: hybrid (NLM + bilateral), non-local means (nlm), bilateral, gaussian, or median.",
+    "Requested strength":
+      "Master strength percentage you set (0–100). Maps to algorithm parameters such as NLM h and bilateral sigma.",
+    "Effective strength":
+      "Strength actually applied after optional category-target search (e.g. residual-std reduction goals).",
+    Note: "Short pipeline note (algorithm, strength, or bypass when strength ≈ 0).",
+    "Auto params":
+      "Internal parameters derived from strength: NLM h, bilateral σ color/space, blend factor with the original.",
+    "Resolution preserved":
+      "Whether output width×height matches the processed source. PhotoEditor defaults to preserving resolution.",
+    "Width scale": "output_width / source_width. 1.0 means no horizontal resize.",
+    "Height scale": "output_height / source_height. 1.0 means no vertical resize.",
+    "Pixel count ratio": "output_pixels / source_pixels. Below 1.0 means fewer pixels (downscale).",
+    "File size ratio": "output_file_bytes / source_file_bytes after JPEG encode (not a quality score).",
+    MAE: "Mean Absolute Error: average |output − source| over all channels (0–255 scale). Lower means closer to source.",
+    "MAE RGB": "Mean Absolute Error computed separately for red, green, and blue channels.",
+    RMSE: "Root Mean Square Error of pixel differences. More sensitive to large local deviations than MAE.",
+    "PSNR (dB)":
+      "Peak Signal-to-Noise Ratio in decibels from MSE vs a 255 peak. Higher usually means closer to the source (typical denoise ~25–40 dB).",
+    "Max |Δ|": "Largest absolute channel difference between source and output at any pixel.",
+    "Mean signed Δ RGB":
+      "Average signed change per channel (output − source). Negative means that channel got darker overall.",
+    "Std Δ RGB": "Standard deviation of per-channel differences — spread of change, not just the mean shift.",
+    "% pixels max|Δ| > 1": "Share of pixels where at least one channel changed by more than 1 level.",
+    "% pixels max|Δ| > 5": "Share of pixels with any-channel change greater than 5 levels.",
+    "% pixels max|Δ| > 10": "Share of pixels with any-channel change greater than 10 levels.",
+    "% pixels max|Δ| > 20": "Share of pixels with any-channel change greater than 20 levels.",
+    "% pixels max|Δ| > 40": "Share of pixels with any-channel change greater than 40 levels.",
+    "Compare note":
+      "How source and output were aligned for comparison (same size vs LANCZOS resize of source to output size).",
+    "Source mean / std": "Rec.709 luminance mean and standard deviation of the comparison source.",
+    "Output mean / std": "Rec.709 luminance mean and standard deviation of the output image.",
+    "Mean Δ": "Change in mean luminance (output − source). Negative = darker overall.",
+    "Std Δ": "Change in luminance standard deviation (contrast proxy).",
+    "Δ R · G · B": "Change in mean red, green, and blue (output − source) on a 0–255 scale.",
+    "Laplacian var src → out":
+      "Laplacian variance of luminance before → after. High values mean more high-frequency energy (detail + noise).",
+    "Laplacian var % change":
+      "Percent change in Laplacian variance. Negative values indicate high-frequency energy was reduced (typical of denoise).",
+    "Mean |L| src → out": "Mean absolute Laplacian response before → after (edge/noise energy proxy).",
+    "Mean |L| % change": "Percent change in mean |Laplacian|. Negative = less high-frequency energy.",
+    "Residual std src → out":
+      "Std of residual after 5×5 box blur before → after. A noise proxy: lower after denoise is expected.",
+    "Residual std % change": "Percent change in residual std. Negative = less residual high-frequency noise.",
+    "Local std mean src → out":
+      "Mean of local 5×5 standard deviation maps before → after (texture/noise energy).",
+    "Local std mean % change": "Percent change in mean local std. Negative = smoother local neighborhoods.",
+    "Local std median % change":
+      "Percent change in median local std (robust to bright outliers like string lights).",
+    "Luma SSIM-like":
+      "Global SSIM-like score on Rec.709 luminance (not windowed SSIM). Near 1.0 means structure is largely preserved.",
+    "R / G / B": "Global SSIM-like scores on red, green, and blue channels separately.",
+    "Width × height": "Image dimensions in pixels (width × height).",
+    "Pixel count": "Total number of pixels (width × height).",
+    "Aspect ratio": "width / height. Portrait photos are typically near 0.67 (2:3).",
+    "File size": "Encoded file size on disk (or of the last export).",
+    Format: "Container/codec format of the loaded or exported image (JPEG, PNG, …).",
+    "Bit depth / channels": "Bits per sample and channel count (RGB = 3 channels at 8-bit).",
+    "ICC profile": "Whether an embedded ICC color profile was present on load.",
+    DPI: "Dots-per-inch metadata from the file (often 72 for web photos; not physical print size).",
+    Mean: "Average Rec.709 luminance (0.2126R + 0.7152G + 0.0722B) across all pixels.",
+    Std: "Standard deviation of Rec.709 luminance — overall contrast/spread of brightness.",
+    R: "Mean red channel value (0–255).",
+    G: "Mean green channel value (0–255).",
+    B: "Mean blue channel value (0–255).",
+    "Laplacian variance":
+      "Variance of a 3×3 Laplacian on luminance. Higher = more high-frequency content (fine detail and/or grain).",
+    "Mean |Laplacian|": "Mean absolute Laplacian response — average high-frequency energy magnitude.",
+    "Residual std (5×5 box)":
+      "Standard deviation of (image − 5×5 box blur). Isolates fine residual noise/texture.",
+    "Local std mean (5×5)":
+      "Average of per-pixel local standard deviation in a 5×5 window — local texture/noise energy.",
+    "Local std median (5×5)":
+      "Median of the local std map — robust summary less skewed by bright speculars or lights.",
+  };
+
+  const CATEGORY_DESCRIPTORS = {
+    pipeline:
+      "How the denoise pipeline ran: algorithm, requested vs effective strength, and internal parameters. Use this to verify what was applied and whether category targets adjusted strength.",
+    geometry_delta:
+      "Spatial and file-size changes between source and output. PhotoEditor aims to preserve resolution; scales near 1.0 and resolution_preserved=yes indicate no unintended downscale.",
+    pixel_difference:
+      "Pixel-level difference statistics between source and output after optional size alignment. MAE/RMSE/PSNR quantify overall change; threshold percentages show how widespread edits are.",
+    luminance_delta:
+      "Brightness changes using Rec.709 luminance. Mean Δ tracks overall lightening/darkening; Std Δ tracks contrast change.",
+    color_delta:
+      "Average color shift per RGB channel after processing. Useful for spotting unwanted warm/cool casts introduced by denoise or photometric offsets.",
+    high_frequency_delta:
+      "High-frequency energy before vs after denoise via Laplacian statistics. Strong negative % change means grain/detail energy dropped — expected for denoise, but can also soften real detail.",
+    noise_proxy_delta:
+      "Noise-oriented proxies (residual std after blur, local std maps). Negative % changes indicate smoother local neighborhoods and less residual grain.",
+    structural_similarity:
+      "Global SSIM-like structure scores. Values near 1.0 mean coarse structure is preserved even when noise is reduced.",
+    geometry:
+      "Intrinsic image geometry and encoding metadata: dimensions, aspect ratio, file size, format, bit depth, ICC, and DPI.",
+    luminance:
+      "Global Rec.709 luminance statistics for a single image (mean brightness and contrast spread).",
+    color:
+      "Mean red, green, and blue channel levels on a 0–255 scale for a single image.",
+    high_frequency:
+      "Laplacian-based high-frequency energy for a single image. Combines fine detail and noise; use deltas after denoise to see reduction.",
+    noise_proxies:
+      "Single-image noise/texture proxies without a reference pair: residual after 5×5 blur and local standard deviation maps.",
+    source_metrics:
+      "Full metric pack for the source (or comparison-aligned source) image before denoise.",
+    output_metrics:
+      "Full metric pack for the denoised output image.",
+  };
+
+  function metricsToolbarHtml() {
+    return `<div class="metrics-toolbar">
+      <span class="metrics-toolbar-label">Categories</span>
+      <div class="metrics-toolbar-actions">
+        <button type="button" class="btn" data-metrics-expand-all title="Expand all categories">Expand all</button>
+        <button type="button" class="btn" data-metrics-collapse-all title="Collapse all categories">Collapse all</button>
+      </div>
     </div>`;
   }
 
   function bindMetricCardInteractions(root) {
     if (!root) return;
-    root.querySelectorAll("[data-value-toggle]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const text = btn.parentElement?.querySelector(".metric-value-text");
-        if (!text) return;
-        const open = text.classList.toggle("is-open");
-        btn.textContent = open ? "Show less" : "Show more";
+
+    // Persist open/closed category state
+    root.querySelectorAll("details.metric-category").forEach((det) => {
+      const id = det.getAttribute("data-cat-id");
+      if (!id) return;
+      det.addEventListener("toggle", () => {
+        categoryOpenState.set(id, det.open);
       });
     });
-    root.querySelectorAll("[data-card-expand]").forEach((btn) => {
+
+    root.querySelectorAll("[data-metrics-expand-all]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const cardEl = btn.closest(".metric-card");
-        if (!cardEl) return;
-        const expanded = cardEl.classList.toggle("is-expanded");
-        btn.textContent = expanded ? "Done" : "Resize";
-        if (expanded) {
-          // Nudge panel wider if still cramped
-          const w = getMetricsWidth();
-          if (w < 480) setMetricsWidth(Math.min(560, w + 80));
+        root.querySelectorAll("details.metric-category").forEach((d) => {
+          d.open = true;
+          const id = d.getAttribute("data-cat-id");
+          if (id) categoryOpenState.set(id, true);
+        });
+      });
+    });
+
+    root.querySelectorAll("[data-metrics-collapse-all]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        root.querySelectorAll("details.metric-category").forEach((d) => {
+          d.open = false;
+          const id = d.getAttribute("data-cat-id");
+          if (id) categoryOpenState.set(id, false);
+        });
+      });
+    });
+
+    // Category descriptor expand
+    root.querySelectorAll("[data-cat-desc-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const wrap = btn.closest(".cat-descriptor");
+        const body = wrap?.querySelector(".cat-descriptor-body");
+        if (!body) return;
+        const open = body.hasAttribute("hidden");
+        if (open) {
+          body.removeAttribute("hidden");
+          btn.setAttribute("aria-expanded", "true");
+          btn.classList.add("is-open");
+        } else {
+          body.setAttribute("hidden", "");
+          btn.setAttribute("aria-expanded", "false");
+          btn.classList.remove("is-open");
+        }
+      });
+    });
+
+    // Per-metric descriptor expand
+    root.querySelectorAll("[data-desc-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const row = btn.closest(".metric-row");
+        const desc = row?.querySelector(".metric-descriptor");
+        if (!desc) return;
+        const open = desc.hasAttribute("hidden");
+        if (open) {
+          desc.removeAttribute("hidden");
+          btn.setAttribute("aria-expanded", "true");
+          btn.classList.add("is-open");
+        } else {
+          desc.setAttribute("hidden", "");
+          btn.setAttribute("aria-expanded", "false");
+          btn.classList.remove("is-open");
+        }
+      });
+    });
+
+    // Full value expand (for long text)
+    root.querySelectorAll("[data-value-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const row = btn.closest(".metric-row");
+        const full = row?.querySelector(".metric-value-full");
+        const text = btn.querySelector(".metric-value-text");
+        if (full) {
+          const open = full.hasAttribute("hidden");
+          if (open) {
+            full.removeAttribute("hidden");
+            btn.setAttribute("aria-expanded", "true");
+            text?.classList.remove("is-clamped");
+            text?.classList.add("is-open");
+          } else {
+            full.setAttribute("hidden", "");
+            btn.setAttribute("aria-expanded", "false");
+            text?.classList.add("is-clamped");
+            text?.classList.remove("is-open");
+          }
+          return;
+        }
+        // Short values: still allow unclamp if clampable
+        if (text?.classList.contains("is-clampable") || text?.classList.contains("is-clamped")) {
+          text.classList.toggle("is-clamped");
+          text.classList.toggle("is-open");
+          btn.setAttribute(
+            "aria-expanded",
+            text.classList.contains("is-open") ? "true" : "false"
+          );
         }
       });
     });
@@ -973,43 +1227,87 @@
   }
 
   // ── metrics rendering ───────────────────────────────────────────────
-  function renderSourceMetrics(m) {
+  function renderSourceMetrics(m, { idPrefix = "src", defaultOpen = false, wrapToolbar = true } = {}) {
     if (!m) return "";
     const g = m.geometry || {};
     const L = m.luminance || {};
     const c = m.color_means || {};
     const hf = m.high_frequency || {};
     const n = m.noise_proxies || {};
-    return [
-      card("Geometry / encoding", [
-        ["Width × height", `${g.width} × ${g.height}`],
-        ["Pixel count", g.pixel_count?.toLocaleString?.() ?? g.pixel_count],
-        ["Aspect ratio", fmtNum(g.aspect_ratio, 4)],
-        ["File size", fmtBytes(g.file_bytes)],
-        ["Format", g.format || "—"],
-        ["Bit depth / channels", `${g.bit_depth}-bit · ${g.channels} ch`],
-        ["ICC profile", g.has_icc ? "yes" : "no"],
-        ["DPI", Array.isArray(g.dpi) ? g.dpi.map((x) => fmtNum(x, 1)).join(" × ") : "—"],
-      ]),
-      card("Luminance (Rec.709)", [
-        ["Mean", fmtNum(L.mean)],
-        ["Std", fmtNum(L.std)],
-      ]),
-      card("Color means (RGB 0–255)", [
-        ["R", fmtNum(c.r)],
-        ["G", fmtNum(c.g)],
-        ["B", fmtNum(c.b)],
-      ]),
-      card("High-frequency energy", [
-        ["Laplacian variance", fmtNum(hf.laplacian_variance)],
-        ["Mean |Laplacian|", fmtNum(hf.laplacian_mean_abs)],
-      ]),
-      card("Noise proxies", [
-        ["Residual std (5×5 box)", fmtNum(n.residual_std_5x5)],
-        ["Local std mean (5×5)", fmtNum(n.local_std_mean_5x5)],
-        ["Local std median (5×5)", fmtNum(n.local_std_median_5x5)],
-      ]),
-    ].join("");
+    const cats = [
+      metricCategory({
+        id: `${idPrefix}-geometry`,
+        title: "Geometry / encoding",
+        summary: g.width && g.height ? `${g.width}×${g.height}` : "",
+        descriptor: CATEGORY_DESCRIPTORS.geometry,
+        defaultOpen,
+        rows: [
+          ["Width × height", `${g.width} × ${g.height}`],
+          ["Pixel count", g.pixel_count?.toLocaleString?.() ?? g.pixel_count],
+          ["Aspect ratio", fmtNum(g.aspect_ratio, 4)],
+          ["File size", fmtBytes(g.file_bytes)],
+          ["Format", g.format || "—"],
+          ["Bit depth / channels", `${g.bit_depth}-bit · ${g.channels} ch`],
+          ["ICC profile", g.has_icc ? "yes" : "no"],
+          [
+            "DPI",
+            Array.isArray(g.dpi) ? g.dpi.map((x) => fmtNum(x, 1)).join(" × ") : "—",
+          ],
+        ],
+      }),
+      metricCategory({
+        id: `${idPrefix}-luminance`,
+        title: "Luminance (Rec.709)",
+        summary: L.mean != null ? `μ ${fmtNum(L.mean)}` : "",
+        descriptor: CATEGORY_DESCRIPTORS.luminance,
+        defaultOpen,
+        rows: [
+          ["Mean", fmtNum(L.mean)],
+          ["Std", fmtNum(L.std)],
+        ],
+      }),
+      metricCategory({
+        id: `${idPrefix}-color`,
+        title: "Color means (RGB 0–255)",
+        summary:
+          c.r != null ? `R${fmtNum(c.r, 0)} G${fmtNum(c.g, 0)} B${fmtNum(c.b, 0)}` : "",
+        descriptor: CATEGORY_DESCRIPTORS.color,
+        defaultOpen,
+        rows: [
+          ["R", fmtNum(c.r)],
+          ["G", fmtNum(c.g)],
+          ["B", fmtNum(c.b)],
+        ],
+      }),
+      metricCategory({
+        id: `${idPrefix}-hf`,
+        title: "High-frequency energy",
+        summary:
+          hf.laplacian_variance != null ? `var ${fmtNum(hf.laplacian_variance)}` : "",
+        descriptor: CATEGORY_DESCRIPTORS.high_frequency,
+        defaultOpen,
+        rows: [
+          ["Laplacian variance", fmtNum(hf.laplacian_variance)],
+          ["Mean |Laplacian|", fmtNum(hf.laplacian_mean_abs)],
+        ],
+      }),
+      metricCategory({
+        id: `${idPrefix}-noise`,
+        title: "Noise proxies",
+        summary:
+          n.residual_std_5x5 != null ? `res ${fmtNum(n.residual_std_5x5)}` : "",
+        descriptor: CATEGORY_DESCRIPTORS.noise_proxies,
+        defaultOpen,
+        rows: [
+          ["Residual std (5×5 box)", fmtNum(n.residual_std_5x5)],
+          ["Local std mean (5×5)", fmtNum(n.local_std_mean_5x5)],
+          ["Local std median (5×5)", fmtNum(n.local_std_median_5x5)],
+        ],
+      }),
+    ];
+    const body = cats.join("");
+    if (!wrapToolbar) return body;
+    return `${metricsToolbarHtml()}<div class="metrics-accordion">${body}</div>`;
   }
 
   function renderReport(report) {
@@ -1017,179 +1315,313 @@
 
     const parts = [];
     const pipe = report.pipeline || {};
-    if (pipe.algorithm) {
+    if (pipe.algorithm || pipe.method) {
+      const methodFull = pipe.method || "classical denoise";
+      const autoParams = pipe.params
+        ? [
+            `NLM h ≈ ${fmtNum(pipe.params.nlm_h, 2)}`,
+            `bilateral σ color ≈ ${fmtNum(pipe.params.bilateral_sigma_color, 1)}`,
+            `bilateral σ space ≈ ${fmtNum(pipe.params.bilateral_sigma_space, 1)}`,
+            `bilateral d ≈ ${fmtNum(pipe.params.bilateral_d, 0)}`,
+            `gaussian σ ≈ ${fmtNum(pipe.params.gaussian_sigma, 2)}`,
+            `median ksize ≈ ${fmtNum(pipe.params.median_ksize, 0)}`,
+            `blend with original ≈ ${fmtNum(pipe.params.blend, 3)}`,
+          ].join("\n")
+        : "—";
       parts.push(
-        card("Pipeline", [
-          ["Method", pipe.method || "classical denoise"],
-          ["Algorithm", pipe.algorithm],
-          ["Requested strength", `${fmtNum(pipe.requested_strength_pct, 1)}%`],
-          ["Effective strength", `${fmtNum(pipe.effective_strength_pct, 1)}%`],
-          ["Note", pipe.note || "—"],
-          [
-            "Auto params",
-            pipe.params
-              ? `NLM h≈${fmtNum(pipe.params.nlm_h, 2)}, bil σc≈${fmtNum(
-                  pipe.params.bilateral_sigma_color,
-                  1
-                )}, blend=${fmtNum(pipe.params.blend, 3)}`
-              : "—",
+        metricCategory({
+          id: "cmp-pipeline",
+          title: "Pipeline",
+          summary: `${pipe.algorithm || "—"} · ${fmtNum(pipe.effective_strength_pct, 0)}%`,
+          descriptor: CATEGORY_DESCRIPTORS.pipeline,
+          defaultOpen: true,
+          rows: [
+            ["Method", methodFull],
+            ["Algorithm", pipe.algorithm || "—"],
+            ["Requested strength", `${fmtNum(pipe.requested_strength_pct, 1)}%`],
+            ["Effective strength", `${fmtNum(pipe.effective_strength_pct, 1)}%`],
+            ["Note", pipe.note || "—"],
+            ["Auto params", autoParams],
           ],
-        ])
+        })
       );
     }
 
     const gd = report.geometry_delta || {};
     parts.push(
-      card("Geometry delta", [
-        ["Resolution preserved", gd.resolution_preserved ? "yes" : "no"],
-        ["Width scale", fmtNum(gd.width_scale, 4)],
-        ["Height scale", fmtNum(gd.height_scale, 4)],
-        ["Pixel count ratio", fmtNum(gd.pixel_count_ratio, 4)],
-        [
-          "File size ratio",
-          gd.file_bytes_ratio != null ? fmtNum(gd.file_bytes_ratio, 3) : "—",
+      metricCategory({
+        id: "cmp-geometry",
+        title: "Geometry delta",
+        summary: gd.resolution_preserved ? "res preserved" : "resized",
+        descriptor: CATEGORY_DESCRIPTORS.geometry_delta,
+        defaultOpen: false,
+        rows: [
+          ["Resolution preserved", gd.resolution_preserved ? "yes" : "no"],
+          ["Width scale", fmtNum(gd.width_scale, 4)],
+          ["Height scale", fmtNum(gd.height_scale, 4)],
+          ["Pixel count ratio", fmtNum(gd.pixel_count_ratio, 4)],
+          [
+            "File size ratio",
+            gd.file_bytes_ratio != null ? fmtNum(gd.file_bytes_ratio, 3) : "—",
+          ],
         ],
-      ])
+      })
     );
 
     const pd = report.pixel_difference || {};
     const thr = pd.pct_pixels_max_abs_over || {};
     parts.push(
-      card("Pixel difference (src→out)", [
-        ["MAE", fmtNum(pd.mae)],
-        [
-          "MAE RGB",
-          Array.isArray(pd.mae_rgb) ? pd.mae_rgb.map((x) => fmtNum(x)).join(" · ") : "—",
+      metricCategory({
+        id: "cmp-pixel",
+        title: "Pixel difference (src→out)",
+        summary: pd.psnr_db != null ? `PSNR ${fmtNum(pd.psnr_db)} dB` : "",
+        descriptor: CATEGORY_DESCRIPTORS.pixel_difference,
+        defaultOpen: true,
+        rows: [
+          ["MAE", fmtNum(pd.mae)],
+          [
+            "MAE RGB",
+            Array.isArray(pd.mae_rgb) ? pd.mae_rgb.map((x) => fmtNum(x)).join(" · ") : "—",
+          ],
+          ["RMSE", fmtNum(pd.rmse)],
+          ["PSNR (dB)", fmtNum(pd.psnr_db)],
+          ["Max |Δ|", fmtNum(pd.max_abs, 1)],
+          [
+            "Mean signed Δ RGB",
+            Array.isArray(pd.mean_signed_delta_rgb)
+              ? pd.mean_signed_delta_rgb.map((x) => fmtNum(x)).join(" · ")
+              : "—",
+          ],
+          [
+            "Std Δ RGB",
+            Array.isArray(pd.std_delta_rgb)
+              ? pd.std_delta_rgb.map((x) => fmtNum(x)).join(" · ")
+              : "—",
+          ],
+          ["% pixels max|Δ| > 1", `${fmtNum(thr["1"], 2)}%`],
+          ["% pixels max|Δ| > 5", `${fmtNum(thr["5"], 2)}%`],
+          ["% pixels max|Δ| > 10", `${fmtNum(thr["10"], 2)}%`],
+          ["% pixels max|Δ| > 20", `${fmtNum(thr["20"], 2)}%`],
+          ["% pixels max|Δ| > 40", `${fmtNum(thr["40"], 2)}%`],
+          ["Compare note", report.comparison_note || "—"],
         ],
-        ["RMSE", fmtNum(pd.rmse)],
-        ["PSNR (dB)", fmtNum(pd.psnr_db)],
-        ["Max |Δ|", fmtNum(pd.max_abs, 1)],
-        [
-          "Mean signed Δ RGB",
-          Array.isArray(pd.mean_signed_delta_rgb)
-            ? pd.mean_signed_delta_rgb.map((x) => fmtNum(x)).join(" · ")
-            : "—",
-        ],
-        [
-          "Std Δ RGB",
-          Array.isArray(pd.std_delta_rgb)
-            ? pd.std_delta_rgb.map((x) => fmtNum(x)).join(" · ")
-            : "—",
-        ],
-        ["% pixels max|Δ| > 1", `${fmtNum(thr["1"], 2)}%`],
-        ["% pixels max|Δ| > 5", `${fmtNum(thr["5"], 2)}%`],
-        ["% pixels max|Δ| > 10", `${fmtNum(thr["10"], 2)}%`],
-        ["% pixels max|Δ| > 20", `${fmtNum(thr["20"], 2)}%`],
-        ["% pixels max|Δ| > 40", `${fmtNum(thr["40"], 2)}%`],
-        ["Compare note", report.comparison_note || "—"],
-      ])
+      })
     );
 
     const ld = report.luminance_delta || {};
     parts.push(
-      card("Luminance delta", [
-        ["Source mean / std", `${fmtNum(ld.source_mean)} / ${fmtNum(ld.source_std)}`],
-        ["Output mean / std", `${fmtNum(ld.output_mean)} / ${fmtNum(ld.output_std)}`],
-        [
-          "Mean Δ",
-          fmtNum(ld.mean_delta),
-          deltaClass(ld.mean_delta),
+      metricCategory({
+        id: "cmp-luma",
+        title: "Luminance delta",
+        summary: ld.mean_delta != null ? `Δμ ${fmtNum(ld.mean_delta)}` : "",
+        descriptor: CATEGORY_DESCRIPTORS.luminance_delta,
+        defaultOpen: false,
+        rows: [
+          ["Source mean / std", `${fmtNum(ld.source_mean)} / ${fmtNum(ld.source_std)}`],
+          ["Output mean / std", `${fmtNum(ld.output_mean)} / ${fmtNum(ld.output_std)}`],
+          ["Mean Δ", fmtNum(ld.mean_delta), deltaClass(ld.mean_delta)],
+          ["Std Δ", fmtNum(ld.std_delta)],
         ],
-        ["Std Δ", fmtNum(ld.std_delta)],
-      ])
+      })
     );
 
     const cd = report.color_delta || {};
     parts.push(
-      card("Color delta (RGB means)", [
-        [
-          "Δ R · G · B",
-          Array.isArray(cd.mean_delta_rgb)
-            ? cd.mean_delta_rgb.map((x) => fmtNum(x)).join(" · ")
-            : "—",
+      metricCategory({
+        id: "cmp-color",
+        title: "Color delta (RGB means)",
+        summary: Array.isArray(cd.mean_delta_rgb)
+          ? cd.mean_delta_rgb.map((x) => fmtNum(x, 1)).join(" · ")
+          : "",
+        descriptor: CATEGORY_DESCRIPTORS.color_delta,
+        defaultOpen: false,
+        rows: [
+          [
+            "Δ R · G · B",
+            Array.isArray(cd.mean_delta_rgb)
+              ? cd.mean_delta_rgb.map((x) => fmtNum(x)).join(" · ")
+              : "—",
+          ],
         ],
-      ])
+      })
     );
 
     const hf = report.high_frequency_delta || {};
     parts.push(
-      card("High-frequency delta", [
-        [
-          "Laplacian var src → out",
-          `${fmtNum(hf.laplacian_variance_source)} → ${fmtNum(hf.laplacian_variance_output)}`,
+      metricCategory({
+        id: "cmp-hf",
+        title: "High-frequency delta",
+        summary:
+          hf.laplacian_variance_pct_change != null
+            ? `${fmtNum(hf.laplacian_variance_pct_change)}%`
+            : "",
+        descriptor: CATEGORY_DESCRIPTORS.high_frequency_delta,
+        defaultOpen: true,
+        rows: [
+          [
+            "Laplacian var src → out",
+            `${fmtNum(hf.laplacian_variance_source)} → ${fmtNum(hf.laplacian_variance_output)}`,
+          ],
+          [
+            "Laplacian var % change",
+            `${fmtNum(hf.laplacian_variance_pct_change)}%`,
+            deltaClass(hf.laplacian_variance_pct_change, true),
+          ],
+          [
+            "Mean |L| src → out",
+            `${fmtNum(hf.laplacian_mean_abs_source)} → ${fmtNum(hf.laplacian_mean_abs_output)}`,
+          ],
+          [
+            "Mean |L| % change",
+            `${fmtNum(hf.laplacian_mean_abs_pct_change)}%`,
+            deltaClass(hf.laplacian_mean_abs_pct_change, true),
+          ],
         ],
-        [
-          "Laplacian var % change",
-          `${fmtNum(hf.laplacian_variance_pct_change)}%`,
-          deltaClass(hf.laplacian_variance_pct_change, true),
-        ],
-        [
-          "Mean |L| src → out",
-          `${fmtNum(hf.laplacian_mean_abs_source)} → ${fmtNum(hf.laplacian_mean_abs_output)}`,
-        ],
-        [
-          "Mean |L| % change",
-          `${fmtNum(hf.laplacian_mean_abs_pct_change)}%`,
-          deltaClass(hf.laplacian_mean_abs_pct_change, true),
-        ],
-      ])
+      })
     );
 
     const nd = report.noise_proxy_delta || {};
     parts.push(
-      card("Noise proxy delta", [
-        [
-          "Residual std src → out",
-          `${fmtNum(nd.residual_std_source)} → ${fmtNum(nd.residual_std_output)}`,
+      metricCategory({
+        id: "cmp-noise",
+        title: "Noise proxy delta",
+        summary:
+          nd.residual_std_pct_change != null
+            ? `res ${fmtNum(nd.residual_std_pct_change)}%`
+            : "",
+        descriptor: CATEGORY_DESCRIPTORS.noise_proxy_delta,
+        defaultOpen: true,
+        rows: [
+          [
+            "Residual std src → out",
+            `${fmtNum(nd.residual_std_source)} → ${fmtNum(nd.residual_std_output)}`,
+          ],
+          [
+            "Residual std % change",
+            `${fmtNum(nd.residual_std_pct_change)}%`,
+            deltaClass(nd.residual_std_pct_change, true),
+          ],
+          [
+            "Local std mean src → out",
+            `${fmtNum(nd.local_std_mean_source)} → ${fmtNum(nd.local_std_mean_output)}`,
+          ],
+          [
+            "Local std mean % change",
+            `${fmtNum(nd.local_std_mean_pct_change)}%`,
+            deltaClass(nd.local_std_mean_pct_change, true),
+          ],
+          [
+            "Local std median % change",
+            `${fmtNum(nd.local_std_median_pct_change)}%`,
+            deltaClass(nd.local_std_median_pct_change, true),
+          ],
         ],
-        [
-          "Residual std % change",
-          `${fmtNum(nd.residual_std_pct_change)}%`,
-          deltaClass(nd.residual_std_pct_change, true),
-        ],
-        [
-          "Local std mean src → out",
-          `${fmtNum(nd.local_std_mean_source)} → ${fmtNum(nd.local_std_mean_output)}`,
-        ],
-        [
-          "Local std mean % change",
-          `${fmtNum(nd.local_std_mean_pct_change)}%`,
-          deltaClass(nd.local_std_mean_pct_change, true),
-        ],
-        [
-          "Local std median % change",
-          `${fmtNum(nd.local_std_median_pct_change)}%`,
-          deltaClass(nd.local_std_median_pct_change, true),
-        ],
-      ])
+      })
     );
 
     const ss = report.structural_similarity || {};
     parts.push(
-      card("Structural similarity (global)", [
-        ["Luma SSIM-like", fmtNum(ss.luma_ssim_global, 4)],
-        ["R / G / B", `${fmtNum(ss.r_ssim_global, 4)} / ${fmtNum(ss.g_ssim_global, 4)} / ${fmtNum(ss.b_ssim_global, 4)}`],
-      ])
+      metricCategory({
+        id: "cmp-ssim",
+        title: "Structural similarity (global)",
+        summary:
+          ss.luma_ssim_global != null ? `luma ${fmtNum(ss.luma_ssim_global, 3)}` : "",
+        descriptor: CATEGORY_DESCRIPTORS.structural_similarity,
+        defaultOpen: false,
+        rows: [
+          ["Luma SSIM-like", fmtNum(ss.luma_ssim_global, 4)],
+          [
+            "R / G / B",
+            `${fmtNum(ss.r_ssim_global, 4)} / ${fmtNum(ss.g_ssim_global, 4)} / ${fmtNum(
+              ss.b_ssim_global,
+              4
+            )}`,
+          ],
+        ],
+      })
     );
 
-    parts.push(`<p class="section-title" style="margin:0.5rem 0">Source metrics</p>`);
-    parts.push(renderSourceMetrics(report.source || state.sourceMetrics));
-    if (report.output) {
-      parts.push(`<p class="section-title" style="margin:0.5rem 0">Output metrics</p>`);
-      parts.push(renderSourceMetrics(report.output));
+    // Nested source / output packs as expandable groups of categories
+    const srcPack = report.source || state.sourceMetrics;
+    if (srcPack) {
+      const open = categoryOpenState.has("pack-source")
+        ? categoryOpenState.get("pack-source")
+        : false;
+      parts.push(`<details class="metric-category metric-pack" data-cat-id="pack-source" ${
+        open ? "open" : ""
+      }>
+        <summary class="metric-category-summary">
+          <span class="cat-chevron" aria-hidden="true"></span>
+          <span class="cat-title">Source image metrics</span>
+          <span class="cat-summary">full pack</span>
+          <span class="cat-count">5</span>
+        </summary>
+        <div class="metric-category-body">
+          <div class="cat-descriptor">
+            <button type="button" class="cat-descriptor-toggle" data-cat-desc-toggle aria-expanded="false">
+              About this category
+            </button>
+            <div class="cat-descriptor-body" hidden>
+              <p>${escapeHtml(CATEGORY_DESCRIPTORS.source_metrics)}</p>
+            </div>
+          </div>
+          <div class="metrics-nested">
+            ${renderSourceMetrics(srcPack, {
+              idPrefix: "src",
+              defaultOpen: false,
+              wrapToolbar: false,
+            })}
+          </div>
+        </div>
+      </details>`);
     }
 
-    return parts.join("");
+    if (report.output) {
+      const open = categoryOpenState.has("pack-output")
+        ? categoryOpenState.get("pack-output")
+        : false;
+      parts.push(`<details class="metric-category metric-pack" data-cat-id="pack-output" ${
+        open ? "open" : ""
+      }>
+        <summary class="metric-category-summary">
+          <span class="cat-chevron" aria-hidden="true"></span>
+          <span class="cat-title">Output image metrics</span>
+          <span class="cat-summary">full pack</span>
+          <span class="cat-count">5</span>
+        </summary>
+        <div class="metric-category-body">
+          <div class="cat-descriptor">
+            <button type="button" class="cat-descriptor-toggle" data-cat-desc-toggle aria-expanded="false">
+              About this category
+            </button>
+            <div class="cat-descriptor-body" hidden>
+              <p>${escapeHtml(CATEGORY_DESCRIPTORS.output_metrics)}</p>
+            </div>
+          </div>
+          <div class="metrics-nested">
+            ${renderSourceMetrics(report.output, {
+              idPrefix: "out",
+              defaultOpen: false,
+              wrapToolbar: false,
+            })}
+          </div>
+        </div>
+      </details>`);
+    }
+
+    return `${metricsToolbarHtml()}<div class="metrics-accordion">${parts.join("")}</div>`;
   }
 
   function refreshMetrics() {
     if (state.report) {
       els.metricsRoot.innerHTML = renderReport(state.report);
     } else if (state.sourceMetrics) {
-      els.metricsRoot.innerHTML = renderSourceMetrics(state.sourceMetrics);
+      els.metricsRoot.innerHTML = renderSourceMetrics(state.sourceMetrics, {
+        defaultOpen: true,
+      });
     } else {
       els.metricsRoot.innerHTML =
-        '<div class="empty-metrics">Upload an image to see technical metrics.</div>';
+        '<div class="empty-metrics">Upload an image to see expandable metric categories: geometry, luminance, color, high-frequency energy, noise proxies, and comparison deltas after denoise.</div>';
     }
     bindMetricCardInteractions(els.metricsRoot);
   }
