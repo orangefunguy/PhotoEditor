@@ -12,5 +12,14 @@
   ],
   "vars": {
     "API_ORIGIN": "https://photoeditor-oiom.onrender.com"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "AUTH",
+      "id": "589022e1c1d445f8a2ecc1826318f862"
+    }
+  ],
+  "observability": {
+    "enabled": true
   }
 }

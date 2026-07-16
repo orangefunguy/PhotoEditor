@@ -26,10 +26,18 @@ services:
       - key: COOKIE_SECURE
         value: "true"
       - key: UVICORN_WORKERS
-        value: "2"
+        value: "1"
+      - key: SESSION_DAYS
+        value: "90"
+      - key: AUTH_KV_URL
+        value: https://photoeditor.fernandol.workers.dev
+      - key: AUTH_SYNC_SECRET
+        sync: false
+      - key: AUTH_KV_NAMESPACE_ID
+        value: 589022e1c1d445f8a2ecc1826318f862
       - key: DISABLE_DOCS
         value: "false"
-      # Email — prefer Resend SMTP (same pattern as CRM) or Cloudflare Email Sending
+      # Email — Resend SMTP or Cloudflare Email Sending
       - key: EMAIL_FROM
         value: noreply@herooflegend.com
       - key: EMAIL_FROM_NAME

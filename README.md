@@ -36,12 +36,13 @@ Repository: [github.com/orangefunguy/PhotoEditor](https://github.com/orangefungu
 
 ## Production (editor.herooflegend.com)
 
-PhotoEditor is packaged for **https://editor.herooflegend.com** (same Hero of Legend DNS style as CRM).
+PhotoEditor is packaged for **https://editor.herooflegend.com**.
 
 | Piece | Setup |
 |-------|--------|
 | Host | Render Docker (`render.yaml` / `Dockerfile`) or `docker compose -f docker-compose.prod.yml` |
-| Auth | Login required; first user is admin; email invites for teammates |
+| Edge | Cloudflare Worker + KV for durable auth (accounts survive free-tier restarts) |
+| Auth | Login required; email invites for teammates; sessions last ~90 days (sliding) |
 | Email | **Resend SMTP** or **Cloudflare Email Sending** (see `.env.production.example`) |
 | Guide | **[docs/deployment.md](docs/deployment.md)** |
 
@@ -92,7 +93,7 @@ Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in your browser — you 
 
 | URL | Purpose |
 |-----|---------|
-| http://127.0.0.1:8000/login | Sign in / first-time admin setup |
+| http://127.0.0.1:8000/login | Sign in |
 | http://127.0.0.1:8000/ | Editor (auth required) |
 | http://127.0.0.1:8000/admin | Workspace admin: invite users, view-as profiles |
 | http://127.0.0.1:8000/docs | Tool documentation (auth required) |
@@ -100,17 +101,16 @@ Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in your browser — you 
 
 Hover any control’s **?** for an ELI5 tip. The header badge shows **local** when the API is healthy.
 
-### Authentication (CRM-style)
+### Authentication
 
-PhotoEditor uses the same product flow as LeadForge CRM:
-
-1. **First visit** → create the **admin** account (email + strong password).
-2. **Admin** invites teammates by email from **Admin** (`/admin`). **Invite links expire after 3 days.**
-3. Invitees open the link within 3 days, set name + password (**complete invite**), then use the app.
+1. **Sign in** with your existing account (production already has an admin).
+2. **Admins** invite teammates by email from **Admin** (`/admin`). **Invite links expire after 3 days.**
+3. Invitees open the link within 3 days, set name + password, then use the app.
 4. Each profile has **isolated** uploads, outputs, library, and browser cache.
-5. **Admins** can **View profile data** for any workspace member (server-side `view-as` cookie) without sharing passwords.
+5. **Admins** can **View profile data** for any workspace member without sharing passwords.
+6. Sessions last **90 days** and renew with activity. Production stores accounts in **Cloudflare KV** so they survive host restarts.
 
-Password policy (aligned with CRM): 10+ chars, upper, lower, number, special character.
+Password policy: 10+ chars, upper, lower, number, special character.
 
 Without SMTP, invite links are printed in the server console and appended to `data/invite_links.log`. Optional SMTP env vars are in `.env.example`.
 

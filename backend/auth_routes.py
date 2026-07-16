@@ -1,4 +1,4 @@
-"""Auth HTTP routes — CRM-style setup, login, invite, complete-invite, workspace users."""
+"""Auth HTTP routes — setup, login, invite, complete-invite, workspace users."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from .auth import (
     verify_password,
 )
 from .auth_db import db
+from .auth_sync import kv_enabled
 from .email_service import email_status
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -97,6 +98,8 @@ def auth_status(ctx: AuthContext | None = Depends(get_optional_auth)) -> dict[st
         "viewing_as_other": bool(ctx and ctx.view_as_user_id),
         "email": email_status(),
         "frontend_url": authmod.frontend_url(),
+        "session_days": authmod.SESSION_DAYS,
+        "durable_auth": kv_enabled(),
     }
 
 

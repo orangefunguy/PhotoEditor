@@ -1,4 +1,8 @@
-"""SQLite persistence for PhotoEditor auth (CRM-style invites + profiles)."""
+"""SQLite persistence for PhotoEditor auth (invites + profiles + sessions).
+
+In production on ephemeral hosts, pair with auth_sync → Cloudflare KV so
+accounts and sessions survive restarts.
+"""
 
 from __future__ import annotations
 
@@ -68,6 +72,16 @@ def init_db() -> None:
                 """
             )
             conn.commit()
+
+            # Restore durable accounts from Cloudflare KV when configured
+            try:
+                from .auth_sync import restore_on_boot
+
+                status = restore_on_boot(conn)
+                print(f"[PhotoEditor auth] init: {status}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[PhotoEditor auth] durable restore skipped: {exc}")
+
             _initialized = True
         finally:
             conn.close()
@@ -76,6 +90,17 @@ def init_db() -> None:
 def db() -> sqlite3.Connection:
     init_db()
     return _connect()
+
+
+def commit_and_sync(conn: sqlite3.Connection) -> None:
+    """Commit local transaction and push durable snapshot when KV is enabled."""
+    conn.commit()
+    try:
+        from .auth_sync import sync_after_write
+
+        sync_after_write(conn)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[PhotoEditor auth] sync after write failed: {exc}")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict | None:

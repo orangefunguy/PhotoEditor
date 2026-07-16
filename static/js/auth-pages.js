@@ -102,24 +102,12 @@
       showAlert(e.message || "Could not reach the server.", "error");
     }
 
-    // Always start on Sign in; Sign up is a secondary link underneath
+    // Always start on Sign in. First-time setup is only when the server has no users.
     showLoginPanel();
-    if (needsSetup) {
-      showAlert(
-        "No admin exists yet. Use Sign up below to create the first admin account.",
-        "ok"
-      );
-    }
 
     $("#showSignup")?.addEventListener("click", () => showSignupPanel(needsSetup));
     $("#showSignin")?.addEventListener("click", () => {
       showLoginPanel();
-      if (needsSetup) {
-        showAlert(
-          "No admin exists yet. Use Sign up below to create the first admin account.",
-          "ok"
-        );
-      }
     });
 
     loginForm.addEventListener("submit", async (e) => {
@@ -131,7 +119,7 @@
       try {
         if (needsSetup) {
           showAlert(
-            "No admin account exists yet. Click Sign up to create one first.",
+            "This workspace has no accounts yet. Use Sign up below to create the first admin.",
             "error"
           );
           return;

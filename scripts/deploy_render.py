@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Create or update PhotoEditor on Render.com and trigger a deploy.
 
-Uses Web_Grok_API_Key or RENDER_API_KEY (same as CRM deploy scripts).
-Loads Resend key from environment / PhotoEditor .env (never prints secrets).
+Uses Web_Grok_API_Key or RENDER_API_KEY.
+Loads Resend key and durable-auth secrets from environment / PhotoEditor .env
+(never prints secrets).
 """
 
 from __future__ import annotations
@@ -78,6 +79,32 @@ def env_vars() -> list[dict]:
         or file_env.get("resend_key")
         or file_env.get("RESEND_API_KEY")
     )
+    auth_secret = (
+        os.getenv("AUTH_SYNC_SECRET")
+        or file_env.get("AUTH_SYNC_SECRET")
+        or ""
+    )
+    auth_kv_url = (
+        os.getenv("AUTH_KV_URL")
+        or file_env.get("AUTH_KV_URL")
+        # Prefer workers.dev for server-to-server (avoids custom-domain bot rules)
+        or "https://photoeditor.fernandol.workers.dev"
+    )
+    cf_account = (
+        os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        or file_env.get("CLOUDFLARE_ACCOUNT_ID")
+        or "831af2f854aa8c4d1f0029bfa7345165"
+    )
+    cf_token = (
+        os.getenv("CLOUDFLARE_API_TOKEN")
+        or file_env.get("CLOUDFLARE_API_TOKEN")
+        or ""
+    )
+    kv_ns = (
+        os.getenv("AUTH_KV_NAMESPACE_ID")
+        or file_env.get("AUTH_KV_NAMESPACE_ID")
+        or "589022e1c1d445f8a2ecc1826318f862"
+    )
     pairs = [
         ("APP_ENV", "production"),
         ("AUTH_ENABLED", "true"),
@@ -86,7 +113,8 @@ def env_vars() -> list[dict]:
         ("CORS_ORIGINS", "https://editor.herooflegend.com"),
         ("COOKIE_SECURE", "true"),
         ("COOKIE_SAMESITE", "lax"),
-        ("UVICORN_WORKERS", "2"),
+        ("SESSION_DAYS", "90"),
+        ("UVICORN_WORKERS", "1"),
         ("DISABLE_DOCS", "false"),
         ("EMAIL_FROM", "noreply@herooflegend.com"),
         ("EMAIL_FROM_NAME", "PhotoEditor"),
@@ -95,7 +123,24 @@ def env_vars() -> list[dict]:
         ("SMTP_USER", "resend"),
         ("SMTP_TLS", "true"),
         ("SMTP_FROM", "noreply@herooflegend.com"),
+        ("AUTH_KV_URL", auth_kv_url),
+        ("CLOUDFLARE_ACCOUNT_ID", cf_account),
+        ("AUTH_KV_NAMESPACE_ID", kv_ns),
     ]
+    if cf_token:
+        pairs.append(("CLOUDFLARE_API_TOKEN", cf_token))
+    else:
+        print(
+            "WARNING: CLOUDFLARE_API_TOKEN missing — durable KV API sync disabled "
+            "unless AUTH_SYNC_SECRET + Worker path works."
+        )
+    if auth_secret:
+        pairs.append(("AUTH_SYNC_SECRET", auth_secret))
+    else:
+        print(
+            "NOTE: AUTH_SYNC_SECRET optional when CLOUDFLARE_API_TOKEN is set "
+            "(direct KV API is preferred)."
+        )
     if resend:
         pairs.append(("SMTP_PASSWORD", resend))
         pairs.append(("RESEND_API_KEY", resend))

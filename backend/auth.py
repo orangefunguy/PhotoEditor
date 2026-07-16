@@ -1,11 +1,10 @@
-"""Authentication helpers modeled on LeadForge CRM (invite + session + roles).
+"""Authentication helpers for PhotoEditor (invite + session + roles).
 
-Uses local SQLite instead of Supabase so PhotoEditor can run fully offline,
-while preserving the same product flow:
-  - first user becomes admin
+Uses local SQLite (with optional durable Cloudflare KV sync in production):
+  - first user becomes admin (one-time setup)
   - admin invites by email
   - invitee completes profile (name + password)
-  - session cookie for web UI
+  - long-lived session cookie for the web UI (sliding expiry)
   - per-user data scope; admin can view-as other profiles in the workspace
 """
 
@@ -23,15 +22,16 @@ from typing import Any
 import bcrypt
 from fastapi import Cookie, Depends, Header, HTTPException, status
 
-from .auth_db import db, init_db, row_to_dict  # noqa: F401 — init_db used by callers
+from .auth_db import commit_and_sync, db, init_db, row_to_dict  # noqa: F401
 from .email_service import send_invite_email, send_welcome_email
 
 SESSION_COOKIE = "pe_session"
 VIEW_AS_COOKIE = "pe_view_as"
-SESSION_DAYS = 14
+# Long-lived sessions; renewed on activity so users stay signed in
+SESSION_DAYS = int(os.getenv("SESSION_DAYS", "90"))
 INVITE_DAYS = 3
 
-# CRM-aligned password policy (slightly relaxed length for local installs: 10+)
+# Password policy: 10+ chars, upper, lower, number, special character
 PASSWORD_MIN = 10
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -215,7 +215,7 @@ def create_workspace(name: str = "Default workspace") -> str:
             "INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)",
             (wid, name, now),
         )
-        conn.commit()
+        commit_and_sync(conn)
         return wid
     finally:
         conn.close()
@@ -229,7 +229,7 @@ def create_admin_user(
     last_name: str,
 ) -> AuthUser:
     if not needs_setup():
-        raise ValueError("Setup already completed.")
+        raise ValueError("Setup already completed. Sign in instead.")
     validate_password_strength(password)
     email_n = email.strip().lower()
     wid = create_workspace("PhotoEditor Workspace")
@@ -255,7 +255,7 @@ def create_admin_user(
                 now,
             ),
         )
-        conn.commit()
+        commit_and_sync(conn)
     finally:
         conn.close()
     user = get_user_by_id(uid)
@@ -274,7 +274,7 @@ def create_session(user_id: str) -> str:
             "INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
             (th, user_id, exp, now),
         )
-        conn.commit()
+        commit_and_sync(conn)
     finally:
         conn.close()
     return raw
@@ -289,7 +289,7 @@ def delete_session(raw_token: str | None) -> None:
             "DELETE FROM sessions WHERE token_hash = ?",
             (hash_token(raw_token),),
         )
-        conn.commit()
+        commit_and_sync(conn)
     finally:
         conn.close()
 
@@ -297,17 +297,32 @@ def delete_session(raw_token: str | None) -> None:
 def user_from_session(raw_token: str | None) -> AuthUser | None:
     if not raw_token:
         return None
+    th = hash_token(raw_token)
+    now = time.time()
     conn = db()
     try:
         row = conn.execute(
             """
-            SELECT u.* FROM sessions s
+            SELECT u.*, s.expires_at AS _sess_exp FROM sessions s
             JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = ? AND s.expires_at > ? AND u.is_active = 1 AND u.status = 'active'
             """,
-            (hash_token(raw_token), time.time()),
+            (th, now),
         ).fetchone()
-        return _user_from_row(row)
+        user = _user_from_row(row)
+        if not user or not row:
+            return None
+        # Sliding session: extend when less than half the lifetime remains
+        exp = float(row["_sess_exp"])
+        half = SESSION_DAYS * 86400 / 2
+        if exp - now < half:
+            new_exp = now + SESSION_DAYS * 86400
+            conn.execute(
+                "UPDATE sessions SET expires_at = ? WHERE token_hash = ?",
+                (new_exp, th),
+            )
+            commit_and_sync(conn)
+        return user
     finally:
         conn.close()
 
@@ -358,7 +373,7 @@ def create_invite(
                 """,
                 (uid, email_n, role, workspace_id, token_hash, exp, now, now),
             )
-        conn.commit()
+        commit_and_sync(conn)
     finally:
         conn.close()
 
@@ -407,7 +422,7 @@ def complete_invite(
                 uid,
             ),
         )
-        conn.commit()
+        commit_and_sync(conn)
     finally:
         conn.close()
     user = get_user_by_id(uid)
@@ -456,7 +471,7 @@ def set_user_active(user_id: str, active: bool, actor: AuthUser) -> AuthUser:
             "UPDATE users SET is_active = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
             (1 if active else 0, time.time(), user_id, actor.workspace_id),
         )
-        conn.commit()
+        commit_and_sync(conn)
     finally:
         conn.close()
     user = get_user_by_id(user_id)

@@ -1,139 +1,112 @@
 # Deploy PhotoEditor to editor.herooflegend.com
 
-PhotoEditor is a single FastAPI service (API + static UI). Production target:
+PhotoEditor is a single FastAPI service (API + static UI) fronted by a Cloudflare Worker.
 
 | Piece | Value |
 |-------|--------|
 | Public URL | **https://editor.herooflegend.com** |
-| App host | Render (Docker) or any Docker host |
-| Auth | CRM-style invite + session cookies |
+| App host | Render (Docker) |
+| Edge | Cloudflare Worker (`photoeditor`) + KV auth snapshot |
+| Auth | Invite + session cookies (90-day sliding sessions) |
 | Email | Resend SMTP **or** Cloudflare Email Sending |
-| Data | Persistent disk: SQLite auth DB, uploads, library |
+| Durable auth | Cloudflare KV via Worker `/_internal/auth/*` |
 
-Same DNS pattern as `crm.herooflegend.com`: point the subdomain at your host (CNAME to Render, or A/AAAA to a VPS).
+Traffic: browser → Cloudflare Worker → Render origin. Auth accounts are mirrored to KV so free-tier Render restarts do not wipe logins.
 
 ---
 
 ## 1. Prerequisites
 
-- [ ] Domain DNS access for `herooflegend.com`
-- [ ] Render account (or Docker VPS)
-- [ ] Email provider:
-  - **Resend** (recommended): verify `herooflegend.com`, create API key
-  - **or Cloudflare Email Sending** with a verified sender (same stack as CRM feedback)
+- [ ] Domain DNS for `herooflegend.com` (Cloudflare recommended)
+- [ ] Render account
+- [ ] Wrangler / Cloudflare account for the Worker + KV
+- [ ] Email provider: **Resend** (recommended) with verified `herooflegend.com`
 
 ---
 
-## 2. DNS
-
-Create:
+## 2. Architecture
 
 ```
-editor.herooflegend.com  CNAME  <your-render-service>.onrender.com
+https://editor.herooflegend.com
+        │
+        ▼
+ Cloudflare Worker (photoeditor)
+   ├─ /_internal/auth/*  →  KV namespace PHOTOEDITOR_AUTH (durable)
+   └─ everything else    →  https://photoeditor-*.onrender.com
 ```
 
-(Or A record to your VPS IP.) Enable HTTPS (Render provides TLS automatically).
+On boot, the FastAPI app restores users/sessions from KV when `AUTH_KV_URL` and
+`AUTH_SYNC_SECRET` are set. Every auth write pushes a fresh snapshot.
 
 ---
 
-## 3. Deploy on Render
+## 3. Cloudflare Worker + KV
 
-### Option A — Blueprint
+Namespace (already created in this project):
 
-1. Push this repo to GitHub (already: `orangefunguy/PhotoEditor`).
-2. Render Dashboard → **New → Blueprint** → select the repo.
-3. Confirm service `photoeditor` from [`render.yaml`](../render.yaml).
-4. Set secret env vars (Dashboard → Environment):
+- Binding: `AUTH`
+- ID: `589022e1c1d445f8a2ecc1826318f862`
+
+Deploy from repo root:
+
+```bash
+npx wrangler deploy
+printf '%s' "$AUTH_SYNC_SECRET" | npx wrangler secret put AUTH_SYNC_SECRET
+```
+
+`wrangler.jsonc` binds KV and points `API_ORIGIN` at the Render service.
+
+---
+
+## 4. Render env vars
 
 | Variable | Example |
 |----------|---------|
+| `APP_ENV` | `production` |
+| `AUTH_ENABLED` | `true` |
+| `FRONTEND_URL` | `https://editor.herooflegend.com` |
+| `COOKIE_SECURE` | `true` |
+| `SESSION_DAYS` | `90` |
+| `AUTH_KV_URL` | `https://editor.herooflegend.com` |
+| `AUTH_SYNC_SECRET` | same secret as Worker |
 | `SMTP_HOST` | `smtp.resend.com` |
 | `SMTP_USER` | `resend` |
 | `SMTP_PASSWORD` | `re_…` |
 | `SMTP_FROM` / `EMAIL_FROM` | `noreply@herooflegend.com` |
 
-5. Attach **persistent disk** at `/app/data` (Blueprint includes 10 GB).  
-   Also persist uploads if possible (see note below).
+Optional helper:
 
-### Option B — Manual Docker web service
+```bash
+python3 scripts/deploy_render.py
+```
 
-- Runtime: Docker  
-- Dockerfile path: `./Dockerfile`  
-- Health check: `/healthz`  
-- Env: copy from [`.env.production.example`](../.env.production.example)
-
-### Disk note
-
-Render mounts one disk by default (`/app/data`). SQLite auth lives there.  
-Uploads/outputs/library default under `/app/uploads` etc. For full persistence either:
-
-- Point those paths under `/app/data/...` via future env (or symlink in start script), or  
-- Use a larger single volume and set working dirs under it.
-
-Current start script ensures `/app/data`, `/app/uploads`, `/app/outputs`, `/app/library` exist. Prefer mounting a volume that covers all four for long-term production.
+Use `UVICORN_WORKERS=1` on free tier so a single process owns the local SQLite cache (KV remains the durable store).
 
 ---
 
-## 4. Email setup (Resend SMTP)
+## 5. Email setup (Resend SMTP)
 
-Matches CRM’s production email approach:
-
-1. [resend.com](https://resend.com) → Domain → add `herooflegend.com` DNS records.  
-2. Create API key.  
-3. On Render:
-
-```
-SMTP_HOST=smtp.resend.com
-SMTP_PORT=587
-SMTP_USER=resend
-SMTP_PASSWORD=re_xxxxxxxx
-SMTP_FROM=noreply@herooflegend.com
-SMTP_TLS=true
-EMAIL_FROM=noreply@herooflegend.com
-EMAIL_FROM_NAME=PhotoEditor
-FRONTEND_URL=https://editor.herooflegend.com
-APP_ENV=production
-COOKIE_SECURE=true
-```
-
-4. After deploy, open **Admin → Invite**, send a test invite to yourself.  
+1. [resend.com](https://resend.com) → Domain → add `herooflegend.com` DNS records.
+2. Create API key.
+3. Set SMTP vars on Render (table above).
+4. After deploy, open **Admin → Invite**, send a test invite.
 5. Confirm `GET /api/health` → `"email": { "configured": true, "transport": "smtp" }`.
 
-### Cloudflare Email (alternative)
-
-```
-CLOUDFLARE_ACCOUNT_ID=…
-CLOUDFLARE_API_TOKEN=…   # Email Sending permission
-EMAIL_FROM=noreply@herooflegend.com
-```
-
-Leave `SMTP_HOST` unset so Cloudflare is used.
-
 ---
 
-## 5. First admin account
+## 6. Sign-in (production)
+
+Production already has an admin account once created and synced to KV. Users:
 
 1. Visit **https://editor.herooflegend.com/login**
-2. Click **Sign up**
-3. Create the first admin (email + strong password)
-4. Sign in → **Admin** → invite teammates by email  
-   Invite tokens **expire after 3 days** (shown in the email and admin UI).
+2. **Sign in** with their email + password
+3. Admins invite teammates from **Admin** — invite links expire after **3 days**
 
-Invite emails use `FRONTEND_URL` so links are:
+Invite links:
 
 `https://editor.herooflegend.com/invite?token=…`
 
----
-
-## 6. Local production smoke test
-
-```bash
-cp .env.production.example .env.production
-# fill SMTP secrets
-docker compose -f docker-compose.prod.yml up -d --build
-curl -s http://127.0.0.1:8000/healthz
-curl -s http://127.0.0.1:8000/api/health | jq .
-```
+If the durable store is empty (brand-new install only), Sign up creates the first admin once. That path is not needed once an admin exists in KV.
 
 ---
 
@@ -143,9 +116,8 @@ curl -s http://127.0.0.1:8000/api/health | jq .
 - [ ] `AUTH_ENABLED=true`
 - [ ] `COOKIE_SECURE=true` (HTTPS only)
 - [ ] `FRONTEND_URL=https://editor.herooflegend.com`
-- [ ] Real SMTP or Cloudflare credentials (not log-only)
-- [ ] Strong first-admin password
-- [ ] Persistent volume for `data/` (and media)
+- [ ] `AUTH_KV_URL` + matching `AUTH_SYNC_SECRET` on Worker and Render
+- [ ] Real SMTP credentials
 - [ ] Optional: `DISABLE_DOCS=true` to hide Swagger publicly
 
 ---
@@ -156,19 +128,14 @@ curl -s http://127.0.0.1:8000/api/health | jq .
 |------|---------|
 | `/healthz` | Liveness |
 | `/api/health` | Status + email transport info |
+| `/api/auth/status` | Auth + `durable_auth` flag |
 | `/api/auth/email-status` | Admin: email config |
-| `/login` | Sign in / first admin |
+| `/login` | Sign in |
 | `/admin` | Invites + view-as |
-| `/api/docs` | OpenAPI (if not disabled) |
+| `/_internal/auth/health` | Worker: KV snapshot status (Bearer secret) |
 
 ---
 
-## 9. Cloudflare DNS (Hero of Legend)
+## 9. DNS
 
-If DNS is in Cloudflare (like CRM):
-
-1. Add CNAME `editor` → Render hostname  
-2. Proxy status: DNS only or Proxied (both work; Proxied adds CF CDN)  
-3. SSL/TLS mode: **Full (strict)** when Render has a cert  
-
-No separate Worker is required: PhotoEditor serves UI + API from one origin.
+`editor.herooflegend.com` is a **custom domain on the Worker** (see `wrangler.jsonc` routes). Do not point DNS only at Render if you want durable KV auth — traffic must hit the Worker.

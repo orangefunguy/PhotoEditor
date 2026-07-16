@@ -1,4 +1,4 @@
-"""PhotoEditor FastAPI application with CRM-style auth and per-user isolation."""
+"""PhotoEditor FastAPI application with invite auth and per-user isolation."""
 
 from __future__ import annotations
 

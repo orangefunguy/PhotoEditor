@@ -35,3 +35,6 @@ tmp/
 # Large local samples (keep repo lean)
 samples/*
 !samples/.gitkeep
+
+.auth_sync_secret
+.env.production

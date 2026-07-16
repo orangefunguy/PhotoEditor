@@ -2753,7 +2753,7 @@
   });
   els.zoomPctInput.addEventListener("change", () => scheduleSessionSave());
 
-  // ── Auth bootstrap (CRM-style session cookie) ──────────────────────
+  // ── Auth bootstrap (session cookie) ──────────────────────────────
   async function initAuth() {
     try {
       const r = await fetch("/api/auth/status", { credentials: "same-origin" });
