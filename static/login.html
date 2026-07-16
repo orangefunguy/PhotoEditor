@@ -25,42 +25,73 @@
 
       <div id="alert" class="auth-alert" hidden></div>
 
-      <!-- First-time admin setup -->
-      <form id="setupForm" class="auth-form" hidden>
-        <p class="auth-lead">
-          Create the initial <strong>admin</strong> account. You can invite teammates by email after
-          signing in.
+      <!-- Default: Sign in -->
+      <div id="loginPanel">
+        <form id="loginForm" class="auth-form">
+          <label>Email <input type="email" name="email" required autocomplete="username" /></label>
+          <label
+            >Password
+            <input type="password" name="password" required autocomplete="current-password"
+          /></label>
+          <button type="submit" class="btn btn-primary btn-block" id="btnSignIn">Sign in</button>
+        </form>
+        <p class="auth-switch">
+          <button type="button" class="auth-link-btn" id="showSignup">Sign up</button>
         </p>
-        <label>Email <input type="email" name="email" required autocomplete="username" /></label>
-        <label
-          >First name <input type="text" name="first_name" required autocomplete="given-name"
-        /></label>
-        <label
-          >Last name <input type="text" name="last_name" required autocomplete="family-name"
-        /></label>
-        <label
-          >Password
-          <input type="password" name="password" required minlength="10" autocomplete="new-password"
-        /></label>
-        <p class="auth-hint">
-          10+ characters with upper, lower, number, and special character (CRM-style policy).
+        <p class="auth-foot">
+          Invited by email? Use the invite link from your admin, then sign in here.
         </p>
-        <button type="submit" class="btn btn-primary btn-block">Create admin &amp; sign in</button>
-      </form>
+      </div>
 
-      <!-- Login -->
-      <form id="loginForm" class="auth-form" hidden>
-        <label>Email <input type="email" name="email" required autocomplete="username" /></label>
-        <label
-          >Password
-          <input type="password" name="password" required autocomplete="current-password"
-        /></label>
-        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
-      </form>
+      <!-- Sign up: first admin setup OR invite-only notice -->
+      <div id="signupPanel" hidden>
+        <form id="setupForm" class="auth-form" hidden>
+          <p class="auth-lead">
+            Create the first workspace <strong>admin</strong> account. After this, teammates join by
+            email invite from the Admin page.
+          </p>
+          <label>Email <input type="email" name="email" required autocomplete="username" /></label>
+          <label
+            >First name
+            <input type="text" name="first_name" required autocomplete="given-name"
+          /></label>
+          <label
+            >Last name
+            <input type="text" name="last_name" required autocomplete="family-name"
+          /></label>
+          <label
+            >Password
+            <input
+              type="password"
+              name="password"
+              required
+              minlength="10"
+              autocomplete="new-password"
+          /></label>
+          <p class="auth-hint">
+            10+ characters with upper, lower, number, and special character.
+          </p>
+          <button type="submit" class="btn btn-primary btn-block" id="btnSignUp">
+            Create account &amp; sign in
+          </button>
+        </form>
 
-      <p class="auth-foot">
-        Invited by email? Open the invite link from your admin, or ask them to resend it.
-      </p>
+        <div id="signupInviteOnly" class="auth-form" hidden>
+          <p class="auth-lead">
+            This workspace already has an admin. New accounts are created by
+            <strong>email invite</strong> only (same as LeadForge CRM).
+          </p>
+          <p class="auth-hint">
+            Ask your admin to invite you from <strong>Admin → Invite by email</strong>. If you
+            already have an invite link, open it to set your password, then return here to sign in.
+          </p>
+        </div>
+
+        <p class="auth-switch">
+          Already have an account?
+          <button type="button" class="auth-link-btn" id="showSignin">Sign in</button>
+        </p>
+      </div>
     </div>
     <script src="/static/js/auth-pages.js"></script>
   </body>

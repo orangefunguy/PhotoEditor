@@ -100,6 +100,34 @@
   color: var(--accent);
 }
 
+.auth-switch {
+  margin: 1rem 0 0;
+  text-align: center;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.auth-link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.auth-link-btn:hover {
+  color: var(--accent-strong);
+}
+
+.auth-form .btn-block {
+  margin-top: 0.25rem;
+}
+
 .auth-alert {
   padding: 0.65rem 0.75rem;
   border-radius: var(--radius-sm);
