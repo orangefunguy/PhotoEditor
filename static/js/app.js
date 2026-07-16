@@ -2410,8 +2410,8 @@
           onProgress: (pct, label) => {
             setProgressUI(Math.max(_progressValue, pct || 0), label || "Denoising…");
           },
-          // Cap process size for snappy UI; still plenty of detail for denoise review
-          maxProcessSide: 1800,
+          // Quality-first: larger working size (server used up to ~4000)
+          maxProcessSide: 3600,
         });
         outputBlob = result.outputBlob;
         report = result.report;

@@ -22,6 +22,14 @@
     _worker = new Worker(workerUrl());
     _worker.onmessage = (ev) => {
       const msg = ev.data || {};
+      if (msg.type === "pong") {
+        const p = _pending.get(msg.id);
+        if (p) {
+          _pending.delete(msg.id);
+          p.resolve(msg);
+        }
+        return;
+      }
       const p = _pending.get(msg.id);
       if (!p) return;
       if (msg.type === "progress") {
@@ -46,6 +54,17 @@
       _pending.clear();
       _worker = null;
     };
+    // Warm OpenCV WASM as soon as the editor loads
+    const warmId = nextId();
+    _pending.set(warmId, {
+      resolve: () => {},
+      reject: () => {},
+    });
+    try {
+      _worker.postMessage({ type: "ping", id: warmId });
+    } catch {
+      /* ignore */
+    }
     return _worker;
   }
 
@@ -83,7 +102,8 @@
           mime: transfer.mime,
           fileBytes: transfer.fileBytes,
           controls: controls || {},
-          maxProcessSide: opts.maxProcessSide || 2800,
+          // Quality-first working resolution (matches server intent ~4000)
+          maxProcessSide: opts.maxProcessSide || 3600,
         },
         [transfer.buffer]
       );

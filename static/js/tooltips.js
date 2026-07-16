@@ -12,7 +12,7 @@
     strength:
       "How hard the cleaner tries. Low = gentle. High = stronger noise removal, but real details can get soft too.",
     algorithm:
-      "Which cleaning method to use. All run on your computer. Hybrid is the fast default. NLM is stronger but slower. Median is great for speckles.",
+      "Which cleaner to use (all on your CPU). Hybrid = luminance Non-Local Means + bilateral finish (best balance). NLM = strongest grain removal. Bilateral keeps edges. Median kills speckles. Gaussian is a soft blur.",
     lapVar:
       "How much to reduce “sparkly” fine detail energy. That sparkle is both grain and tiny real texture—don’t crank it unless you mean to.",
     resStd:
@@ -39,7 +39,7 @@
     gaussSigma:
       "Width of the simple Gaussian blur. Higher = softer. 0 = auto from Strength.",
     apply:
-      "Apply the filter using this device’s CPU (Web Worker)—not the remote server. Progress shows real local work.",
+      "Apply high-quality denoise on this device (OpenCV + luminance NLM). Removes grain while protecting edges and color — not a soft blur.",
     analyze: "Measure the loaded image again on this device without cleaning it.",
     download: "Save the cleaned photo to your computer as a JPEG.",
     reset: "Put all sliders and options back to defaults. Your image stays loaded.",
