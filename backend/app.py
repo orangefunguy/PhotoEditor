@@ -14,6 +14,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+# Load .env before auth/email modules read os.environ
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 from . import library as libstore
 from .analysis import analyze_single, load_rgb
 from .auth import AuthContext, get_optional_auth, require_auth

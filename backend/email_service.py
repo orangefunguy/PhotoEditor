@@ -3,10 +3,11 @@
 Supports the same delivery options used around Hero of Legend apps:
 
 1. **SMTP** — Resend, Postmark, SendGrid, SES, etc. (``SMTP_*`` env vars)
-2. **Cloudflare Email Sending** REST API (``CLOUDFLARE_ACCOUNT_ID`` + ``CLOUDFLARE_API_TOKEN``)
-3. **Dev fallback** — log to console + ``data/invite_links.log`` when not production
+2. **Resend HTTP API** — ``RESEND_API_KEY`` / ``resend_key`` (also used as SMTP password)
+3. **Cloudflare Email Sending** REST API (``CLOUDFLARE_ACCOUNT_ID`` + ``CLOUDFLARE_API_TOKEN``)
+4. **Dev fallback** — log to console + ``data/invite_links.log`` when not production
 
-Set ``APP_ENV=production`` to require a real transport (SMTP or Cloudflare).
+Set ``APP_ENV=production`` to require a real transport (SMTP or Cloudflare/Resend).
 """
 
 from __future__ import annotations
@@ -21,6 +22,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
 
 ROOT = Path(__file__).resolve().parent.parent
 EMAIL_LOG = ROOT / "data" / "email.log"
@@ -56,15 +64,39 @@ class EmailResult:
         }
 
 
+def resend_api_key() -> str | None:
+    """Resend key from SMTP_PASSWORD, RESEND_API_KEY, or resend_key (zshrc)."""
+    for k in ("SMTP_PASSWORD", "RESEND_API_KEY", "resend_key"):
+        v = os.getenv(k)
+        if v and v.strip():
+            return v.strip()
+    return None
+
+
 def email_status() -> dict[str, Any]:
     """Public-safe status for admin UI / health."""
-    smtp = bool(os.getenv("SMTP_HOST"))
+    key = resend_api_key()
+    smtp = bool(os.getenv("SMTP_HOST")) or bool(key)
     cf = bool(os.getenv("CLOUDFLARE_ACCOUNT_ID") and os.getenv("CLOUDFLARE_API_TOKEN"))
-    transport = "smtp" if smtp else ("cloudflare" if cf else "log")
+    if os.getenv("SMTP_HOST") or key:
+        transport = "smtp" if os.getenv("SMTP_HOST") else "resend"
+        if key and not os.getenv("SMTP_HOST"):
+            transport = "resend"
+        elif key and (os.getenv("SMTP_HOST") or "").endswith("resend.com"):
+            transport = "resend-smtp"
+        elif os.getenv("SMTP_HOST"):
+            transport = "smtp"
+        else:
+            transport = "resend"
+    elif cf:
+        transport = "cloudflare"
+    else:
+        transport = "log"
+    configured = bool(key or os.getenv("SMTP_HOST") or cf)
     return {
-        "configured": smtp or cf,
+        "configured": configured,
         "transport": transport,
-        "from": DEFAULT_FROM if (smtp or cf) else None,
+        "from": DEFAULT_FROM if configured else None,
         "app_env": APP_ENV,
         "production_requires_transport": APP_ENV == "production",
     }
@@ -78,11 +110,51 @@ def _log(line: str) -> None:
     print(f"[PhotoEditor email] {line}")
 
 
+def _send_resend_api(
+    *, to: str, subject: str, text: str, html_body: str | None
+) -> EmailResult:
+    """Send via Resend HTTPS API (preferred when resend_key is present)."""
+    api_key = resend_api_key()
+    if not api_key:
+        return EmailResult(False, "resend", "No Resend API key configured.", None)
+    payload: dict[str, Any] = {
+        "from": f"{DEFAULT_FROM_NAME} <{DEFAULT_FROM}>",
+        "to": [to],
+        "subject": subject,
+        "text": text,
+    }
+    if html_body:
+        payload["html"] = html_body
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        if r.status_code >= 400:
+            _log(f"resend FAIL → {to} · {r.status_code} {r.text[:400]}")
+            return EmailResult(
+                False,
+                "resend",
+                "Resend API rejected the message.",
+                r.text[:500],
+            )
+        _log(f"resend ok → {to} · {subject} · {r.text[:120]}")
+        return EmailResult(True, "resend", f"Email sent to {to} via Resend.")
+    except Exception as exc:  # noqa: BLE001
+        _log(f"resend FAIL → {to} · {exc}")
+        return EmailResult(False, "resend", "Resend send failed.", str(exc))
+
+
 def _send_smtp(*, to: str, subject: str, text: str, html_body: str | None) -> EmailResult:
-    host = os.environ["SMTP_HOST"]
+    host = os.getenv("SMTP_HOST") or "smtp.resend.com"
     port = int(os.getenv("SMTP_PORT", "587"))
-    user = os.getenv("SMTP_USER", "")
-    password = os.getenv("SMTP_PASSWORD", "")
+    user = os.getenv("SMTP_USER") or "resend"
+    password = resend_api_key() or os.getenv("SMTP_PASSWORD", "")
     sender = DEFAULT_FROM
     use_tls = _env_bool("SMTP_TLS", True)
     use_ssl = _env_bool("SMTP_SSL", False)
@@ -163,6 +235,25 @@ def send_email(
 ) -> EmailResult:
     """Send email using the first configured transport."""
     to_n = to.strip().lower()
+    key = resend_api_key()
+
+    # Prefer Resend HTTP API when a resend key is available (zshrc resend_key / SMTP_PASSWORD)
+    if key and key.startswith("re_"):
+        result = _send_resend_api(
+            to=to_n, subject=subject, text=text, html_body=html_body
+        )
+        if result.ok:
+            return result
+        # Fall through to SMTP if API fails (e.g. domain issues) and SMTP_HOST set
+        if os.getenv("SMTP_HOST"):
+            smtp_result = _send_smtp(
+                to=to_n, subject=subject, text=text, html_body=html_body
+            )
+            if smtp_result.ok:
+                return smtp_result
+            return result  # return original Resend error detail
+        return result
+
     if os.getenv("SMTP_HOST"):
         return _send_smtp(to=to_n, subject=subject, text=text, html_body=html_body)
     if os.getenv("CLOUDFLARE_ACCOUNT_ID") and os.getenv("CLOUDFLARE_API_TOKEN"):
@@ -174,13 +265,13 @@ def send_email(
         return EmailResult(
             False,
             "none",
-            "No email transport configured in production. Set SMTP_* or Cloudflare credentials.",
+            "No email transport configured in production. Set resend_key/SMTP_* or Cloudflare credentials.",
             None,
         )
     return EmailResult(
         True,
         "log",
-        "Email logged locally (dev mode). Configure SMTP or Cloudflare for real delivery.",
+        "Email logged locally (dev mode). Configure Resend or Cloudflare for real delivery.",
         None,
     )
 

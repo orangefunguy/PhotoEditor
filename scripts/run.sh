@@ -13,6 +13,14 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+  echo "Loaded .env (email/auth secrets)"
+fi
+
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 echo "PhotoEditor → http://127.0.0.1:8000"
 exec uvicorn backend.app:app --reload --host 127.0.0.1 --port 8000
