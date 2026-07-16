@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/css/styles.css?v=20260716b" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=20260716c" />
   </head>
   <body>
     <header class="app-header">
@@ -89,8 +89,8 @@
 
           <p class="section-title" data-tip="strength">Master denoise</p>
           <p class="help-text">
-            Percentage strength maps to classical OpenCV filters (hybrid NLM + bilateral by default).
-            Resolution is preserved unless you change scale. Hover
+            Filters run <strong>on this device</strong> (your CPU) for instant Apply — not on the
+            remote server. Hybrid is the fast edge-preserving default. Hover
             <span class="tip-inline">?</span> for ELI5 tips ·
             <a href="/docs#master">full docs</a>
           </p>
@@ -108,8 +108,8 @@
           <div class="control-group">
             <label class="group-label" data-tip="algorithm">Algorithm</label>
             <select id="algorithm">
-              <option value="hybrid" selected>Hybrid (NLM + bilateral)</option>
-              <option value="nlm">Non-local means</option>
+              <option value="hybrid" selected>Hybrid (fast edge-preserving)</option>
+              <option value="nlm">Non-local means (slower, stronger)</option>
               <option value="bilateral">Bilateral</option>
               <option value="gaussian">Gaussian blur</option>
               <option value="median">Median</option>
@@ -442,9 +442,10 @@
       </aside>
     </main>
 
-    <script src="/static/js/store.js?v=20260716b"></script>
-    <script src="/static/js/activity-log.js?v=20260716b"></script>
-    <script src="/static/js/tooltips.js?v=20260716b"></script>
-    <script src="/static/js/app.js?v=20260716b"></script>
+    <script src="/static/js/store.js?v=20260716c"></script>
+    <script src="/static/js/activity-log.js?v=20260716c"></script>
+    <script src="/static/js/tooltips.js?v=20260716c"></script>
+    <script src="/static/js/client-pipeline.js?v=20260716c"></script>
+    <script src="/static/js/app.js?v=20260716c"></script>
   </body>
 </html>

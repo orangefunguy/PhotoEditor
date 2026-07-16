@@ -12,7 +12,7 @@
     strength:
       "How hard the cleaner tries. Low = gentle. High = stronger noise removal, but real details can get soft too.",
     algorithm:
-      "Which cleaning method to use. Hybrid is the best default. Median is great for random speckles. Gaussian is a simple blur.",
+      "Which cleaning method to use. All run on your computer. Hybrid is the fast default. NLM is stronger but slower. Median is great for speckles.",
     lapVar:
       "How much to reduce “sparkly” fine detail energy. That sparkle is both grain and tiny real texture—don’t crank it unless you mean to.",
     resStd:
@@ -39,8 +39,8 @@
     gaussSigma:
       "Width of the simple Gaussian blur. Higher = softer. 0 = auto from Strength.",
     apply:
-      "Apply the current filter settings. You’ll see a progress bar while the image is processing.",
-    analyze: "Measure the loaded image again without cleaning it.",
+      "Apply the filter using this device’s CPU (Web Worker)—not the remote server. Progress shows real local work.",
+    analyze: "Measure the loaded image again on this device without cleaning it.",
     download: "Save the cleaned photo to your computer as a JPEG.",
     reset: "Put all sliders and options back to defaults. Your image stays loaded.",
     saveSession: "Force-save your current work into this browser’s cache right now.",

@@ -2214,99 +2214,108 @@
   }
 
   async function analyzeFile(file) {
-    setStatus("Uploading image…", "busy");
-    setUploadProgress(0, "Starting upload…");
+    setStatus("Loading image on this device…", "busy");
+    setUploadProgress(0, "Reading image…");
     if (els.dropzone) els.dropzone.setAttribute("aria-busy", "true");
 
-    const fd = new FormData();
-    fd.append("file", file);
-
-    let data;
     try {
-      data = await postFormWithUploadProgress("/api/analyze", fd, {
-        onProgress: (pct, label) => {
-          if (pct == null) {
-            setUploadProgress(15, label || "Uploading…");
-            return;
-          }
-          // Reserve 0–85% for bytes upload; remainder is server analyze
-          const mapped = Math.min(85, pct * 0.85);
-          setUploadProgress(mapped, label);
-        },
-      });
-      setUploadProgress(90, "Analyzing image…");
-      setStatus("Analyzing image…", "busy");
-    } catch (err) {
-      hideUploadProgress();
-      if (els.dropzone) els.dropzone.removeAttribute("aria-busy");
-      logIssue("error", "upload", err.message || "Upload failed", {
-        filename: file?.name,
-        size: file?.size,
-      });
-      throw err;
-    }
+      const Pipeline = window.PEClientPipeline;
+      let metrics = null;
+      let localJobId = `local-${(Store && Store.uid()) || Date.now().toString(16)}`;
 
-    try {
+      // Instant preview first
       revokeTrackedUrls();
       state.projectId = Store ? Store.uid() : String(Date.now());
       state.libraryEntryId = null;
-      state.jobId = data.job_id;
+      state.jobId = localJobId;
       state.filename = file.name;
-      state.sourceMetrics = data.metrics;
       state.report = null;
-      // Prefer local blob URL for instant, reliable first paint (avoid cold-start 502 on /api/jobs/…/source)
       state.sourceUrl = urlFromBlob(file);
       state.outputUrl = null;
       state.view = "source";
       state.fitOnLoad = true;
       state.history = [];
       state.historyIndex = -1;
+      state.file = file;
       $$("#viewToggle button").forEach((b) =>
         b.classList.toggle("active", b.dataset.view === "source")
       );
-      els.jobBadge.textContent = data.job_id;
+      els.jobBadge.textContent = "local";
       els.btnDenoise.disabled = false;
       els.btnAnalyze.disabled = false;
       els.btnDownload.disabled = true;
-      const g = data.metrics.geometry;
-      els.fileMeta.textContent = `${file.name} · ${g.width}×${g.height} · ${fmtBytes(
-        g.file_bytes
-      )}`;
-      setUploadProgress(96, "Updating preview…");
-      refreshMetrics();
+      els.fileMeta.textContent = `${file.name} · ${fmtBytes(file.size)}`;
+      setUploadProgress(25, "Showing preview…");
       setPreview();
 
-      // Seed undo history with original
-      const sourceBlob = file;
+      // Local metrics on this device (fast)
+      if (Pipeline?.isSupported?.()) {
+        setUploadProgress(40, "Analyzing on this device…");
+        setStatus("Analyzing on this device…", "busy");
+        const local = await Pipeline.analyzeLocal(file, {
+          onProgress: (pct, label) => setUploadProgress(40 + (pct || 0) * 0.45, label),
+        });
+        metrics = local.metrics;
+      } else {
+        // Fallback: server analyze
+        setUploadProgress(30, "Uploading for analysis…");
+        const fd = new FormData();
+        fd.append("file", file);
+        const data = await postFormWithUploadProgress("/api/analyze", fd, {
+          onProgress: (pct, label) => {
+            if (pct == null) {
+              setUploadProgress(40, label || "Uploading…");
+              return;
+            }
+            setUploadProgress(30 + pct * 0.55, label);
+          },
+        });
+        metrics = data.metrics;
+        localJobId = data.job_id || localJobId;
+        state.jobId = localJobId;
+        els.jobBadge.textContent = localJobId;
+      }
+
+      state.sourceMetrics = metrics;
+      const g = metrics?.geometry || {};
+      els.fileMeta.textContent = `${file.name} · ${g.width || "?"}×${g.height || "?"} · ${fmtBytes(
+        g.file_bytes || file.size
+      )}`;
+      setUploadProgress(90, "Caching session…");
+      refreshMetrics();
+
       await pushHistoryStep({
         id: Store ? Store.uid() : String(Date.now()),
         at: Date.now(),
         label: "Original upload",
-        summary: `${g.width}×${g.height} · ${fmtBytes(g.file_bytes)}`,
+        summary: `${g.width || "?"}×${g.height || "?"} · ${fmtBytes(g.file_bytes || file.size)}`,
         controls: collectControls(),
-        jobId: data.job_id,
+        jobId: state.jobId,
         view: "source",
         filename: file.name,
-        sourceBlob,
+        sourceBlob: file,
         outputBlob: null,
-        sourceMetrics: data.metrics,
+        sourceMetrics: metrics,
         reportSummary: null,
         report: null,
       });
-      setUploadProgress(99, "Caching session…");
-      await saveToLibrary();
+      // Library sync can wait — don't block the UI
+      saveToLibrary().catch(() => {});
       setUploadProgress(100, "Done");
-      setStatus("Analysis complete · session cached");
+      setStatus("Ready · analyzed on this device · session cached");
     } catch (err) {
-      logIssue("error", "upload", err.message || "Post-upload processing failed", {
+      hideUploadProgress();
+      if (els.dropzone) els.dropzone.removeAttribute("aria-busy");
+      logIssue("error", "upload", err.message || "Load failed", {
         filename: file?.name,
+        size: file?.size,
       });
       throw err;
     } finally {
       setTimeout(() => {
         hideUploadProgress();
         if (els.dropzone) els.dropzone.removeAttribute("aria-busy");
-      }, 500);
+      }, 400);
     }
   }
 
@@ -2328,7 +2337,11 @@
   }
 
   function startApplyProgress() {
-    stopApplyProgress(false);
+    // Progress is driven by the local Web Worker (or server fallback labels).
+    if (_progressTimer) {
+      clearInterval(_progressTimer);
+      _progressTimer = null;
+    }
     _progressValue = 0;
     if (els.applyProgress) els.applyProgress.hidden = false;
     if (els.previewProcessing) els.previewProcessing.hidden = false;
@@ -2339,33 +2352,8 @@
       els.btnDenoise.innerHTML = `<span class="spinner" style="display:inline-block;margin-right:0.4rem;vertical-align:middle;width:12px;height:12px;border-width:2px"></span>Applying…`;
     }
     if (els.btnAnalyze) els.btnAnalyze.disabled = true;
-    setProgressUI(2, "Preparing image…");
-    setStatus("Applying filter…", "busy");
-
-    // Ease toward ~92% while the request runs; finish jumps to 100% on complete
-    const started = Date.now();
-    _progressTimer = setInterval(() => {
-      const elapsed = (Date.now() - started) / 1000;
-      // asymptotic approach: fast early, slower later
-      let target;
-      let label;
-      if (elapsed < 0.4) {
-        target = 8 + elapsed * 40;
-        label = "Preparing image…";
-      } else if (elapsed < 1.2) {
-        target = 28 + (elapsed - 0.4) * 25;
-        label = "Running denoise filter…";
-      } else if (elapsed < 4) {
-        target = 48 + (1 - Math.exp(-(elapsed - 1.2) / 2.2)) * 35;
-        label = "Smoothing noise…";
-      } else {
-        target = 83 + (1 - Math.exp(-(elapsed - 4) / 6)) * 9;
-        label = "Computing metrics…";
-      }
-      // never go backwards; cap before completion
-      const next = Math.min(92, Math.max(_progressValue, target));
-      setProgressUI(next, label);
-    }, 120);
+    setProgressUI(2, "Preparing on this device…");
+    setStatus("Applying filter on this device…", "busy");
   }
 
   function stopApplyProgress(success) {
@@ -2392,95 +2380,116 @@
   }
 
   async function runDenoise() {
-    if (!state.file && !state.jobId) return;
+    if (!state.file && !state.sourceUrl && !state.jobId) return;
     startApplyProgress();
     const controls = collectControls();
-    const fd = new FormData();
-    if (state.jobId) fd.append("job_id", state.jobId);
-    if (state.file) fd.append("file", state.file);
-    fd.append("controls_json", JSON.stringify(controls));
+    const Pipeline = window.PEClientPipeline;
+    const algo = controls.algorithm || "hybrid";
+    const strength = controls.strength_pct;
+
     try {
-      setProgressUI(Math.max(_progressValue, 18), "Uploading & starting filter…");
-      const r = await fetchWithRetry(
-        "/api/denoise",
-        { method: "POST", body: fd },
-        { retries: 3, baseDelayMs: 1200 }
-      );
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        throw new Error(typeof err.detail === "string" ? err.detail : r.statusText);
-      }
-      setProgressUI(Math.max(_progressValue, 88), "Receiving result…");
-      const data = await r.json();
-      setProgressUI(94, "Updating preview…");
-      state.jobId = data.job_id;
-      state.report = data.report;
-
-      // Keep local source blob URL when available; only fetch remote as fallback
+      // Resolve source bytes from local state (never wait on server for Apply)
       let sourceBlob = state.file;
-      if (!sourceBlob && Store) {
-        sourceBlob = await Store.blobFromUrl(data.source_url);
+      if (!sourceBlob && Store && state.sourceUrl) {
+        sourceBlob = await Store.blobFromUrl(state.sourceUrl);
       }
+      if (!sourceBlob && state.history[state.historyIndex]?.sourceBlob) {
+        sourceBlob = state.history[state.historyIndex].sourceBlob;
+      }
+      if (!sourceBlob) {
+        throw new Error("No local image loaded. Drop a photo first.");
+      }
+      state.file = sourceBlob instanceof File ? sourceBlob : state.file;
+
+      setProgressUI(8, "Using this device’s CPU…");
       let outputBlob = null;
-      if (Store) {
+      let report = null;
+
+      if (Pipeline?.isSupported?.()) {
+        const result = await Pipeline.denoiseLocal(sourceBlob, controls, {
+          onProgress: (pct, label) => {
+            setProgressUI(Math.max(_progressValue, pct || 0), label || "Denoising…");
+          },
+          // Cap process size for snappy UI; still plenty of detail for denoise review
+          maxProcessSide: 1800,
+        });
+        outputBlob = result.outputBlob;
+        report = result.report;
+      } else {
+        // Rare fallback: server path
+        setProgressUI(15, "Local engine unavailable — using server…");
+        const fd = new FormData();
+        if (state.jobId && !String(state.jobId).startsWith("local-")) {
+          fd.append("job_id", state.jobId);
+        }
+        fd.append("file", sourceBlob, state.filename || "image.jpg");
+        fd.append("controls_json", JSON.stringify(controls));
+        const r = await fetchWithRetry(
+          "/api/denoise",
+          { method: "POST", body: fd },
+          { retries: 2, baseDelayMs: 1000 }
+        );
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(typeof err.detail === "string" ? err.detail : r.statusText);
+        }
+        const data = await r.json();
+        report = data.report;
         outputBlob = await Store.blobFromUrl(data.output_url);
+        if (data.job_id) state.jobId = data.job_id;
       }
 
-      if (sourceBlob) {
+      if (!outputBlob) throw new Error("Filter produced no image.");
+
+      setProgressUI(94, "Updating preview…");
+      state.report = report;
+      if (!String(state.jobId || "").startsWith("local-") && !state.jobId) {
+        state.jobId = `local-${Date.now().toString(16)}`;
+      }
+      if (!state.sourceUrl || !state.sourceUrl.startsWith("blob:")) {
         state.sourceUrl = urlFromBlob(sourceBlob);
-      } else if (data.source_url) {
-        state.sourceUrl = data.source_url + `?t=${Date.now()}`;
       }
-      if (outputBlob) {
-        state.outputUrl = urlFromBlob(outputBlob);
-      } else if (data.output_url) {
-        state.outputUrl = data.output_url;
-      }
+      state.outputUrl = urlFromBlob(outputBlob);
       state.view = "compare";
       $$("#viewToggle button").forEach((b) =>
         b.classList.toggle("active", b.dataset.view === "compare")
       );
-      els.jobBadge.textContent = data.job_id;
+      els.jobBadge.textContent = "local CPU";
       els.btnDownload.disabled = false;
       els.btnDownload.onclick = () => {
-        if (state.outputUrl && state.outputUrl.startsWith("blob:")) {
-          const a = document.createElement("a");
-          a.href = state.outputUrl;
-          a.download = `photoeditor_${state.jobId || "edit"}_denoised.jpg`;
-          a.click();
-        } else {
-          window.location.href = data.download_url;
-        }
+        const a = document.createElement("a");
+        a.href = state.outputUrl;
+        a.download = `photoeditor_${algo}_${strength}_denoised.jpg`;
+        a.click();
       };
+      if (report?.source_single) state.sourceMetrics = report.source_single;
       refreshMetrics();
       setPreview();
 
-      const psnr = data.report?.pixel_difference?.psnr_db;
-      const hf = data.report?.high_frequency_delta?.laplacian_variance_pct_change;
-      const algo = controls.algorithm || "hybrid";
-      const strength = controls.strength_pct;
-      const summary = `PSNR ${fmtNum(psnr)} dB · HF ${fmtNum(hf)}% · ${algo} ${strength}%`;
+      const psnr = report?.pixel_difference?.psnr_db;
+      const hf = report?.high_frequency_delta?.laplacian_variance_pct_change;
+      const summary = `PSNR ${fmtNum(psnr)} dB · HF ${fmtNum(hf)}% · ${algo} ${strength}% · local`;
 
       setProgressUI(97, "Saving history…");
-
       await pushHistoryStep({
         id: Store ? Store.uid() : String(Date.now()),
         at: Date.now(),
         label: `Denoise · ${algo} · ${strength}%`,
         summary,
         controls,
-        jobId: data.job_id,
+        jobId: state.jobId,
         view: "compare",
         filename: state.filename || state.file?.name,
         sourceBlob: sourceBlob || null,
         outputBlob: outputBlob || null,
-        sourceMetrics: state.sourceMetrics || data.report?.source,
-        reportSummary: briefReportSummary(data.report),
-        report: data.report,
+        sourceMetrics: state.sourceMetrics || report?.source_single,
+        reportSummary: briefReportSummary(report),
+        report,
       });
-      await saveToLibrary();
+      // Don't block UI on library server sync
+      saveToLibrary().catch(() => {});
       stopApplyProgress(true);
-      setStatus(`Done · ${summary} · saved to history & library`);
+      setStatus(`Done · ${summary}`);
     } catch (e) {
       stopApplyProgress(false);
       setStatus(e.message || String(e), "error", { source: "apply" });
