@@ -36,7 +36,11 @@ OUTPUTS.mkdir(exist_ok=True)
 app = FastAPI(
     title="PhotoEditor",
     description="Technical image analysis and controllable denoise for the web",
-    version="1.1.0",
+    version="1.2.0",
+    # Human docs live at /docs; Swagger UI moves to /api/docs
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/openapi.json",
 )
 
 # In-memory job index (also persisted as JSON next to outputs)
@@ -52,7 +56,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "app": "PhotoEditor",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "time": time.time(),
     }
 
@@ -389,6 +393,12 @@ def download_output(job_id: str) -> Response:
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/docs")
+def human_docs() -> FileResponse:
+    """User-facing documentation (ELI5 + technical tool reference)."""
+    return FileResponse(STATIC / "docs.html")
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")

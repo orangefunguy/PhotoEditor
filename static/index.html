@@ -28,6 +28,7 @@
         </div>
         <span class="badge" id="cacheBadge" title="Session cache status"><span class="dot"></span> cache</span>
         <span class="badge" id="healthBadge"><span class="dot"></span> offline</span>
+        <a class="btn" href="/docs" title="Tool documentation">Docs</a>
         <a class="btn btn-ghost" href="https://github.com/orangefunguy/PhotoEditor" target="_blank" rel="noopener"
           >GitHub</a
         >
@@ -39,6 +40,9 @@
       <aside class="panel controls-panel">
         <div class="panel-header">
           <h2>Controls</h2>
+          <a class="btn btn-ghost" href="/docs" style="font-size: 0.72rem; padding: 0.3rem 0.55rem"
+            >Docs</a
+          >
         </div>
         <div class="panel-body">
           <div
@@ -47,6 +51,7 @@
             tabindex="0"
             role="button"
             aria-label="Upload image"
+            data-tip="upload"
           >
             <strong>Drop an image here</strong>
             <span>or click to browse · JPEG, PNG, WebP</span>
@@ -54,14 +59,16 @@
           </div>
           <div class="file-meta" id="fileMeta">No image loaded</div>
 
-          <p class="section-title">Master denoise</p>
+          <p class="section-title" data-tip="strength">Master denoise</p>
           <p class="help-text">
             Percentage strength maps to classical OpenCV filters (hybrid NLM + bilateral by default).
-            Resolution is preserved unless you change scale.
+            Resolution is preserved unless you change scale. Hover
+            <span class="tip-inline">?</span> for ELI5 tips ·
+            <a href="/docs#master">full docs</a>
           </p>
 
           <div class="control-group">
-            <label class="group-label"
+            <label class="group-label" data-tip="strength"
               >Strength <span class="hint" id="strengthVal">50%</span></label
             >
             <div class="control-row">
@@ -71,7 +78,7 @@
           </div>
 
           <div class="control-group">
-            <label class="group-label">Algorithm</label>
+            <label class="group-label" data-tip="algorithm">Algorithm</label>
             <select id="algorithm">
               <option value="hybrid" selected>Hybrid (NLM + bilateral)</option>
               <option value="nlm">Non-local means</option>
@@ -81,14 +88,14 @@
             </select>
           </div>
 
-          <p class="section-title">Category targets (%)</p>
+          <p class="section-title" data-tip="lapVar">Category targets (%)</p>
           <p class="help-text">
             Optional: aim for a reduction in each noise/HF proxy. 0 = use master strength only.
             Negative values are ignored.
           </p>
 
           <div class="control-group">
-            <label class="group-label"
+            <label class="group-label" data-tip="lapVar"
               >Laplacian variance reduce
               <span class="hint" id="lapVarVal">0%</span></label
             >
@@ -99,7 +106,7 @@
           </div>
 
           <div class="control-group">
-            <label class="group-label"
+            <label class="group-label" data-tip="resStd"
               >Residual std reduce (5×5)
               <span class="hint" id="resStdVal">0%</span></label
             >
@@ -110,7 +117,7 @@
           </div>
 
           <div class="control-group">
-            <label class="group-label"
+            <label class="group-label" data-tip="locStd"
               >Local std mean reduce
               <span class="hint" id="locStdVal">0%</span></label
             >
@@ -120,11 +127,11 @@
             </div>
           </div>
 
-          <p class="section-title">Photometric offsets</p>
+          <p class="section-title" data-tip="lumOff">Photometric offsets</p>
           <p class="help-text">Absolute level deltas in 8-bit RGB space after denoise.</p>
 
           <div class="control-group">
-            <label class="group-label"
+            <label class="group-label" data-tip="lumOff"
               >Luminance offset <span class="hint" id="lumOffVal">0</span></label
             >
             <div class="control-row">
@@ -134,7 +141,9 @@
           </div>
 
           <div class="control-group">
-            <label class="group-label">R offset <span class="hint" id="rOffVal">0</span></label>
+            <label class="group-label" data-tip="rOff"
+              >R offset <span class="hint" id="rOffVal">0</span></label
+            >
             <div class="control-row">
               <input type="range" id="rOff" min="-40" max="40" step="0.5" value="0" />
               <input type="number" id="rOffNum" min="-40" max="40" step="0.5" value="0" />
@@ -142,7 +151,9 @@
           </div>
 
           <div class="control-group">
-            <label class="group-label">G offset <span class="hint" id="gOffVal">0</span></label>
+            <label class="group-label" data-tip="gOff"
+              >G offset <span class="hint" id="gOffVal">0</span></label
+            >
             <div class="control-row">
               <input type="range" id="gOff" min="-40" max="40" step="0.5" value="0" />
               <input type="number" id="gOffNum" min="-40" max="40" step="0.5" value="0" />
@@ -150,91 +161,110 @@
           </div>
 
           <div class="control-group">
-            <label class="group-label">B offset <span class="hint" id="bOffVal">0</span></label>
+            <label class="group-label" data-tip="bOff"
+              >B offset <span class="hint" id="bOffVal">0</span></label
+            >
             <div class="control-row">
               <input type="range" id="bOff" min="-40" max="40" step="0.5" value="0" />
               <input type="number" id="bOffNum" min="-40" max="40" step="0.5" value="0" />
             </div>
           </div>
 
-          <p class="section-title">
+          <p class="section-title" data-tip="advanced">
             <button type="button" class="btn btn-ghost" id="toggleAdvanced" style="padding: 0; border: none">
               Advanced parameters ▸
             </button>
           </p>
           <div class="advanced" id="advanced">
             <div class="control-group">
-              <label class="group-label">JPEG quality <span class="hint" id="jpegQVal">95</span></label>
+              <label class="group-label" data-tip="jpegQ"
+                >JPEG quality <span class="hint" id="jpegQVal">95</span></label
+              >
               <div class="control-row">
                 <input type="range" id="jpegQ" min="40" max="100" step="1" value="95" />
                 <input type="number" id="jpegQNum" min="40" max="100" step="1" value="95" />
               </div>
             </div>
             <div class="control-group">
-              <label class="group-label">Scale <span class="hint" id="scaleVal">1.00×</span></label>
+              <label class="group-label" data-tip="scale"
+                >Scale <span class="hint" id="scaleVal">1.00×</span></label
+              >
               <div class="control-row">
                 <input type="range" id="scale" min="0.25" max="1" step="0.01" value="1" />
                 <input type="number" id="scaleNum" min="0.25" max="2" step="0.01" value="1" />
               </div>
             </div>
-            <label class="checkbox-row">
+            <label class="checkbox-row" data-tip="preserveRes">
               <input type="checkbox" id="preserveRes" checked />
               Preserve resolution (ignore scale &lt; 1 unless unchecked)
             </label>
             <div class="control-group" style="margin-top: 0.75rem">
-              <label class="group-label">NLM h (0 = auto)</label>
+              <label class="group-label" data-tip="nlmH">NLM h (0 = auto)</label>
               <input type="number" id="nlmH" min="0" max="30" step="0.1" value="0" />
             </div>
             <div class="control-group">
-              <label class="group-label">Bilateral σ color (0 = auto)</label>
+              <label class="group-label" data-tip="bilSigmaC">Bilateral σ color (0 = auto)</label>
               <input type="number" id="bilSigmaC" min="0" max="200" step="1" value="0" />
             </div>
             <div class="control-group">
-              <label class="group-label">Bilateral σ space (0 = auto)</label>
+              <label class="group-label" data-tip="bilSigmaS">Bilateral σ space (0 = auto)</label>
               <input type="number" id="bilSigmaS" min="0" max="50" step="0.5" value="0" />
             </div>
             <div class="control-group">
-              <label class="group-label">Gaussian σ (0 = auto)</label>
+              <label class="group-label" data-tip="gaussSigma">Gaussian σ (0 = auto)</label>
               <input type="number" id="gaussSigma" min="0" max="5" step="0.05" value="0" />
             </div>
           </div>
 
           <div class="btn-row" style="grid-template-columns: 1fr">
-            <button type="button" class="btn btn-primary btn-block" id="btnDenoise" disabled>
+            <button
+              type="button"
+              class="btn btn-primary btn-block"
+              id="btnDenoise"
+              data-tip="apply"
+              disabled
+            >
               Apply denoise
             </button>
           </div>
           <div class="btn-row">
-            <button type="button" class="btn btn-block" id="btnAnalyze" disabled>Re-analyze</button>
-            <button type="button" class="btn btn-block" id="btnDownload" disabled>Download</button>
+            <button type="button" class="btn btn-block" id="btnAnalyze" data-tip="analyze" disabled>
+              Re-analyze
+            </button>
+            <button type="button" class="btn btn-block" id="btnDownload" data-tip="download" disabled>
+              Download
+            </button>
           </div>
           <div class="btn-row" style="grid-template-columns: 1fr">
-            <button type="button" class="btn btn-ghost btn-block" id="btnReset">Reset controls</button>
+            <button type="button" class="btn btn-ghost btn-block" id="btnReset" data-tip="reset">
+              Reset controls
+            </button>
           </div>
 
-          <p class="section-title">Session &amp; cache</p>
+          <p class="section-title" data-tip="saveSession">Session &amp; cache</p>
           <p class="help-text">
             Work is cached in this browser (IndexedDB) so reloads and brief disconnects restore your
             image, controls, and undo history. The image repository also mirrors to the local server.
+            See <a href="/docs#session">session docs</a>.
           </p>
           <div class="btn-row">
-            <button type="button" class="btn btn-block" id="btnSaveSession" title="Force-save session now">
+            <button type="button" class="btn btn-block" id="btnSaveSession" data-tip="saveSession">
               Save now
             </button>
-            <button type="button" class="btn btn-block" id="btnClearSession" title="Clear current session cache only">
+            <button type="button" class="btn btn-block" id="btnClearSession" data-tip="clearSession">
               Clear session
             </button>
           </div>
           <div class="btn-row">
-            <button type="button" class="btn btn-block" id="btnClearHistory" title="Clear undo history for this project">
+            <button type="button" class="btn btn-block" id="btnClearHistory" data-tip="clearHistory">
               Clear history
             </button>
-            <button type="button" class="btn btn-block" id="btnClearLibrary" title="Delete all repository images">
+            <button type="button" class="btn btn-block" id="btnClearLibrary" data-tip="clearLibrary">
               Clear library
             </button>
           </div>
           <div class="btn-row" style="grid-template-columns: 1fr">
-            <button type="button" class="btn btn-ghost btn-block" id="btnClearAllCache" title="Wipe all local caches">
+            <button type="button" class="btn btn-ghost btn-block" id="btnClearAllCache" data-tip="clearAll">
               Clear all cache
             </button>
           </div>
@@ -247,6 +277,7 @@
             means, Laplacian HF energy, residual / local std noise proxies, and global SSIM-like scores.
             Pipeline uses classical denoise — not generative re-synthesis. Session cache + undo history
             survive page reloads.
+            <a href="/docs">Read the full documentation →</a>
           </p>
         </div>
       </aside>
@@ -358,6 +389,7 @@
     </main>
 
     <script src="/static/js/store.js"></script>
+    <script src="/static/js/tooltips.js"></script>
     <script src="/static/js/app.js"></script>
   </body>
 </html>

@@ -1,0 +1,199 @@
+/* Documentation page */
+
+.docs-page {
+  min-height: 100vh;
+}
+
+.docs-page .brand-mark {
+  text-decoration: none;
+}
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 880px);
+  gap: 1.5rem 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 3rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .docs-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .docs-nav {
+    position: static !important;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+  }
+
+  .docs-nav a {
+    font-size: 0.78rem;
+  }
+}
+
+.docs-nav {
+  position: sticky;
+  top: calc(var(--header-h) + 1rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+
+.docs-nav strong {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 0.25rem;
+}
+
+.docs-nav a {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+  padding: 0.2rem 0;
+}
+
+.docs-nav a:hover {
+  color: var(--accent);
+}
+
+.docs-content {
+  min-width: 0;
+}
+
+.docs-content h2 {
+  margin: 2rem 0 0.85rem;
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 0.45rem;
+}
+
+.docs-content h2:first-child {
+  margin-top: 0.25rem;
+}
+
+.docs-content > section > p {
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0 0 0.85rem;
+}
+
+.docs-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  padding: 1rem 1.1rem 1.15rem;
+  margin-bottom: 0.75rem;
+  scroll-margin-top: calc(var(--header-h) + 0.75rem);
+}
+
+.docs-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.docs-card p {
+  margin: 0 0 0.65rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.docs-card p:last-child {
+  margin-bottom: 0;
+}
+
+.docs-card .eli5 {
+  color: var(--text);
+  background: var(--accent-soft);
+  border: 1px solid rgba(110, 168, 254, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.9rem;
+}
+
+.docs-card ul {
+  margin: 0.35rem 0 0.5rem;
+  padding-left: 1.2rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.docs-card code,
+.docs-content code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+.docs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+}
+
+.docs-table th,
+.docs-table td {
+  text-align: left;
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.docs-table th {
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.docs-table td {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.pipeline-steps {
+  margin: 0.5rem 0 1rem;
+  padding-left: 1.25rem;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.docs-footer {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.tip-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-family: var(--mono);
+  vertical-align: middle;
+}

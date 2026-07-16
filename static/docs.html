@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PhotoEditor Documentation — Tools &amp; Technical Details</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/docs.css" />
+  </head>
+  <body class="docs-page">
+    <header class="app-header">
+      <div class="brand">
+        <a class="brand-mark" href="/" title="Back to editor">PE</a>
+        <div>
+          <h1>PhotoEditor Docs</h1>
+          <p>Technical reference for every control, algorithm, and metric</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <a class="btn" href="/">← Editor</a>
+        <a class="btn btn-ghost" href="https://github.com/orangefunguy/PhotoEditor" target="_blank" rel="noopener"
+          >GitHub</a
+        >
+      </div>
+    </header>
+
+    <div class="docs-layout">
+      <nav class="docs-nav" aria-label="Documentation sections">
+        <strong>On this page</strong>
+        <a href="#overview">Overview</a>
+        <a href="#upload">Upload &amp; preview</a>
+        <a href="#master">Master denoise</a>
+        <a href="#algorithms">Algorithms</a>
+        <a href="#targets">Category targets</a>
+        <a href="#photometric">Photometric offsets</a>
+        <a href="#advanced">Advanced parameters</a>
+        <a href="#actions">Actions</a>
+        <a href="#session">Session, history &amp; library</a>
+        <a href="#metrics">Metrics explained</a>
+        <a href="#pipeline">Processing pipeline</a>
+        <a href="#api">HTTP API</a>
+      </nav>
+
+      <article class="docs-content">
+        <section id="overview">
+          <h2>Overview</h2>
+          <p>
+            PhotoEditor is a local web workbench for <strong>classical image denoise</strong> and
+            <strong>technical quality reporting</strong>. It does not use generative AI to redraw
+            photos. Filters run through OpenCV (non-local means, bilateral, Gaussian, median, or a
+            hybrid). By default, <strong>resolution is preserved</strong>.
+          </p>
+          <p>
+            The left panel holds controls. The center shows the image (with zoom). The right panel
+            shows expandable metric categories. Hover any control’s <span class="tip-badge">?</span>
+            in the editor for an ELI5 tip; this page is the full technical reference.
+          </p>
+        </section>
+
+        <section id="upload">
+          <h2>Upload &amp; preview</h2>
+          <div class="docs-card" id="tool-upload">
+            <h3>Image upload</h3>
+            <p class="eli5"><strong>ELI5:</strong> Drop a picture so the app can look at it and clean it.</p>
+            <p>
+              Accepts common raster formats (JPEG, PNG, WebP, …) via drag-and-drop or file picker.
+              The server stores a copy under <code>uploads/</code>, runs single-image analysis, and
+              returns geometry, luminance, color, high-frequency, and noise-proxy metrics.
+            </p>
+            <ul>
+              <li>Max upload size: 80&nbsp;MB</li>
+              <li>Decoded to 8-bit RGB for processing</li>
+              <li>Starts an undo-history step labeled “Original upload”</li>
+            </ul>
+          </div>
+          <div class="docs-card" id="tool-zoom">
+            <h3>Preview zoom</h3>
+            <p class="eli5"><strong>ELI5:</strong> Make the picture bigger or smaller on screen without changing the real file.</p>
+            <p>
+              Display size is a <strong>percentage of native pixels</strong> (100% = one screen pixel
+              per image pixel). Fit chooses the largest scale that fits the stage; 1:1 is true native
+              resolution. Images anchor top-left. Wheel zooms toward the cursor; drag pans when
+              content overflows.
+            </p>
+          </div>
+        </section>
+
+        <section id="master">
+          <h2>Master denoise</h2>
+          <div class="docs-card" id="tool-strength">
+            <h3>Strength (0–100%)</h3>
+            <p class="eli5"><strong>ELI5:</strong> How hard the cleaner tries. 0 = almost nothing. 100 = scrub a lot (may also blur real details).</p>
+            <p>
+              Maps through a mild power curve (<code>t = (strength/100)^1.2</code>) into algorithm
+              parameters: NLM <code>h</code>, bilateral diameter / σ color / σ space, Gaussian σ,
+              median kernel size, and a blend factor toward the original at low strength (hybrid).
+            </p>
+            <table class="docs-table">
+              <thead>
+                <tr>
+                  <th>Strength</th>
+                  <th>Typical behavior</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0–15%</td>
+                  <td>Very mild; hybrid keeps most original texture</td>
+                </tr>
+                <tr>
+                  <td>30–55%</td>
+                  <td>General-purpose denoise for mild ISO grain</td>
+                </tr>
+                <tr>
+                  <td>70–100%</td>
+                  <td>Aggressive; watch for plastic skin / lost fabric detail</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="docs-card" id="tool-algorithm">
+            <h3>Algorithm</h3>
+            <p class="eli5"><strong>ELI5:</strong> Which “cleaning brush” to use. Hybrid is the default all-rounder.</p>
+            <p>See <a href="#algorithms">Algorithms</a> for technical detail on each option.</p>
+          </div>
+        </section>
+
+        <section id="algorithms">
+          <h2>Algorithms</h2>
+          <div class="docs-card" id="algo-hybrid">
+            <h3>Hybrid (NLM + bilateral) — default</h3>
+            <p class="eli5"><strong>ELI5:</strong> First finds similar patches to average noise away, then gently smooths edges without totally melting them. Mixed with the original so light strength stays natural.</p>
+            <p>
+              Pipeline: <code>fastNlMeansDenoisingColored</code> → light
+              <code>bilateralFilter</code> → linear blend with the original using
+              <code>blend = t</code> from strength. Best general default for photos.
+            </p>
+          </div>
+          <div class="docs-card" id="algo-nlm">
+            <h3>Non-local means (NLM)</h3>
+            <p class="eli5"><strong>ELI5:</strong> Looks around the picture for similar little patches and averages them so random speckles cancel out.</p>
+            <p>
+              OpenCV <code>fastNlMeansDenoisingColored</code>. Filter strength
+              <code>h</code> (and color <code>hColor</code>) scale with master strength unless you set
+              <strong>NLM h</strong> manually. Template window default 7, search window 21.
+            </p>
+            <p>
+              Strengths: good grain reduction on textured areas. Weaknesses: slower on large images;
+              can create watercolor artifacts if <code>h</code> is too high.
+            </p>
+          </div>
+          <div class="docs-card" id="algo-bilateral">
+            <h3>Bilateral</h3>
+            <p class="eli5"><strong>ELI5:</strong> Blurs flat areas but tries not to smear across sharp edges (like hair against a wall).</p>
+            <p>
+              OpenCV <code>bilateralFilter(d, sigmaColor, sigmaSpace)</code>. Diameter and sigmas grow
+              with strength, or use manual σ color / σ space (0 = auto).
+            </p>
+          </div>
+          <div class="docs-card" id="algo-gaussian">
+            <h3>Gaussian blur</h3>
+            <p class="eli5"><strong>ELI5:</strong> Simple soft blur everywhere—like smearing a foggy window. Fast, not picky about edges.</p>
+            <p>
+              Separable Gaussian with σ from strength (or manual <strong>Gaussian σ</strong>). Kernel
+              size derived from σ. Useful as a baseline, not ideal as a sole denoise for portraits.
+            </p>
+          </div>
+          <div class="docs-card" id="algo-median">
+            <h3>Median</h3>
+            <p class="eli5"><strong>ELI5:</strong> Replaces each spot with the middle value of its neighbors—great for weird single-pixel “salt and pepper” dots.</p>
+            <p>
+              OpenCV <code>medianBlur</code> with odd kernel size from strength. Excellent for impulse
+              noise; can stair-step fine lines if overdone.
+            </p>
+          </div>
+        </section>
+
+        <section id="targets">
+          <h2>Category targets (%)</h2>
+          <p>
+            Optional goals: reduce a measured noise/HF proxy by about N%. When any target is &gt; 0,
+            the backend <strong>searches strength</strong> (coarse 5–100% grid) to approximate the
+            goal(s). 0 means “ignore; use master strength only.”
+          </p>
+          <div class="docs-card" id="tool-lap-var">
+            <h3>Laplacian variance reduce</h3>
+            <p class="eli5"><strong>ELI5:</strong> How much to turn down the “sparkly fine detail” energy. That sparkle is both grain and tiny real details.</p>
+            <p>
+              Target: lower <code>Var(Laplacian(luma))</code> by the given percent. Laplacian variance
+              rises with fine edges and noise. Strong reduction often flattens pores and fabric weave.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-res-std">
+            <h3>Residual std reduce (5×5)</h3>
+            <p class="eli5"><strong>ELI5:</strong> After we blur a little, what’s left is mostly tiny freckles of noise. This says how much of that freckling to remove.</p>
+            <p>
+              Residual = image − 5×5 box blur; metric is <code>std(residual)</code> on Rec.709
+              luminance. A solid primary denoise target for grain without requiring a reference pair.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-loc-std">
+            <h3>Local std mean reduce</h3>
+            <p class="eli5"><strong>ELI5:</strong> In every small neighborhood, how bumpy is the picture? Lower this to make neighborhoods calmer.</p>
+            <p>
+              Mean of local standard deviation in 5×5 windows (from local mean / mean-square via box
+              filters). Captures texture and noise energy together.
+            </p>
+          </div>
+        </section>
+
+        <section id="photometric">
+          <h2>Photometric offsets</h2>
+          <p>
+            Applied <strong>after</strong> spatial denoise, as additive deltas in 8-bit channel space
+            (then clipped to 0–255). They do not remove noise; they shift brightness/color.
+          </p>
+          <div class="docs-card" id="tool-lum-off">
+            <h3>Luminance offset</h3>
+            <p class="eli5"><strong>ELI5:</strong> Make the whole photo a little brighter or darker.</p>
+            <p>Adds the same value to R, G, and B (uniform lift/gain in code path).</p>
+          </div>
+          <div class="docs-card" id="tool-rgb-off">
+            <h3>R / G / B offsets</h3>
+            <p class="eli5"><strong>ELI5:</strong> Nudge just red, green, or blue—like warming or cooling the photo a bit.</p>
+            <p>
+              Independent channel adds. Example: +R / −B warms the image. Range in UI: about −40…+40
+              levels.
+            </p>
+          </div>
+        </section>
+
+        <section id="advanced">
+          <h2>Advanced parameters</h2>
+          <div class="docs-card" id="tool-jpeg-q">
+            <h3>JPEG quality</h3>
+            <p class="eli5"><strong>ELI5:</strong> How carefully to save the cleaned picture as a JPEG. Higher = bigger file, fewer save-blobs.</p>
+            <p>Export quality 40–100 for the denoised download / library output. Default 95.</p>
+          </div>
+          <div class="docs-card" id="tool-scale">
+            <h3>Scale</h3>
+            <p class="eli5"><strong>ELI5:</strong> Shrink or grow the pixel size of the result. Usually leave this alone.</p>
+            <p>
+              Multiplier on width/height after denoise. Only applied when
+              <strong>Preserve resolution</strong> is unchecked. Uses area interpolation when
+              downscaling, LANCZOS4 when upscaling.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-preserve">
+            <h3>Preserve resolution</h3>
+            <p class="eli5"><strong>ELI5:</strong> Keep the same number of pixels as the input. On by default so nothing secretly shrinks.</p>
+            <p>When checked, scale is forced to 1.0. Recommended for faithful technical comparison.</p>
+          </div>
+          <div class="docs-card" id="tool-nlm-h">
+            <h3>NLM h (0 = auto)</h3>
+            <p class="eli5"><strong>ELI5:</strong> Manual “how strong is NLM?” knob. 0 means “pick from Strength.”</p>
+            <p>Overrides automatic <code>h</code> / color strength for NLM and hybrid’s NLM stage.</p>
+          </div>
+          <div class="docs-card" id="tool-bil-sigma">
+            <h3>Bilateral σ color / σ space</h3>
+            <p class="eli5"><strong>ELI5:</strong> Color σ = how different colors can still mix. Space σ = how far away neighbors count. 0 = auto from Strength.</p>
+            <p>
+              Manual OpenCV bilateral sigmas. Large σ color flattens more across edges; large σ space
+              pulls from farther pixels.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-gauss-sigma">
+            <h3>Gaussian σ</h3>
+            <p class="eli5"><strong>ELI5:</strong> How wide the simple blur is. 0 = auto from Strength.</p>
+            <p>Only used when Algorithm is Gaussian (or as auto param bookkeeping for other modes).</p>
+          </div>
+        </section>
+
+        <section id="actions">
+          <h2>Actions</h2>
+          <div class="docs-card" id="tool-apply">
+            <h3>Apply denoise</h3>
+            <p class="eli5"><strong>ELI5:</strong> Run the cleaner with your settings and show before/after.</p>
+            <p>
+              <code>POST /api/denoise</code> with controls JSON + job id or file. Returns report +
+              output JPEG. Pushes an undo step and updates the library.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-analyze">
+            <h3>Re-analyze</h3>
+            <p class="eli5"><strong>ELI5:</strong> Measure the current picture again without cleaning it.</p>
+            <p>Re-runs <code>POST /api/analyze</code> on the loaded file; resets comparison report.</p>
+          </div>
+          <div class="docs-card" id="tool-download">
+            <h3>Download</h3>
+            <p class="eli5"><strong>ELI5:</strong> Save the cleaned photo to your computer.</p>
+            <p>Fetches the last denoised JPEG for the job (or blob URL when restored from cache).</p>
+          </div>
+          <div class="docs-card" id="tool-reset">
+            <h3>Reset controls</h3>
+            <p class="eli5"><strong>ELI5:</strong> Put all sliders back to factory defaults. Does not delete your image.</p>
+          </div>
+        </section>
+
+        <section id="session">
+          <h2>Session, history &amp; library</h2>
+          <div class="docs-card" id="tool-session">
+            <h3>Browser session cache (IndexedDB)</h3>
+            <p class="eli5"><strong>ELI5:</strong> The app remembers your work if you refresh or the tab hiccups.</p>
+            <p>
+              Store name <code>photoeditor</code>: session blobs, undo stack (source/output blobs +
+              labels), and library entries. Autosave ~30s and on unload; restore on load.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-history">
+            <h3>Undo history</h3>
+            <p class="eli5"><strong>ELI5:</strong> Every clean is a save-point. Undo goes back; History tab jumps to any step.</p>
+            <p>
+              Max ~40 steps. Header Undo/Redo and shortcuts ⌘/Ctrl+Z, ⌘⇧Z / Ctrl+Y. Clear history
+              drops the stack only.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-library">
+            <h3>Image library (repository)</h3>
+            <p class="eli5"><strong>ELI5:</strong> A shelf of past cleaned photos with a short diary of what you did.</p>
+            <p>
+              Mirrored to server folder <code>library/{id}/</code> with <code>meta.json</code>,
+              <code>history.json</code>, source/output images. Open/delete from the Library tab.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-clear-cache">
+            <h3>Clear session / history / library / all</h3>
+            <p class="eli5"><strong>ELI5:</strong> Throw away saved work when you want a clean slate.</p>
+            <ul>
+              <li><strong>Clear session</strong> — WIP cache only</li>
+              <li><strong>Clear history</strong> — undo stack</li>
+              <li><strong>Clear library</strong> — browser + server repository</li>
+              <li><strong>Clear all cache</strong> — everything local + library wipe</li>
+            </ul>
+          </div>
+        </section>
+
+        <section id="metrics">
+          <h2>Metrics explained</h2>
+          <p>
+            Metrics use Rec.709 luminance <code>Y = 0.2126R + 0.7152G + 0.0722B</code> where noted.
+            Comparison metrics align sizes by LANCZOS-resizing source to output if needed.
+          </p>
+          <div class="docs-card">
+            <h3>Geometry / encoding</h3>
+            <p class="eli5"><strong>ELI5:</strong> How big the picture is and how it was saved (JPEG? how many dots?).</p>
+            <p>Width, height, pixel count, aspect, file bytes, format, bit depth, ICC flag, DPI.</p>
+          </div>
+          <div class="docs-card">
+            <h3>Pixel difference</h3>
+            <p class="eli5"><strong>ELI5:</strong> How different the cleaned picture is from the original, pixel by pixel.</p>
+            <ul>
+              <li><strong>MAE</strong> — mean |Δ|</li>
+              <li><strong>RMSE</strong> — root mean square error</li>
+              <li><strong>PSNR</strong> — 10·log10(255² / MSE); higher ≈ closer to source</li>
+              <li><strong>% pixels over thresholds</strong> — how widespread changes are</li>
+            </ul>
+          </div>
+          <div class="docs-card">
+            <h3>High-frequency (Laplacian)</h3>
+            <p class="eli5"><strong>ELI5:</strong> How much tiny sparkle (grain + fine detail) is in the photo.</p>
+            <p>
+              3×3 Laplacian on luma; report variance and mean absolute response. Denoise typically
+              reduces these (negative % change).
+            </p>
+          </div>
+          <div class="docs-card">
+            <h3>Noise proxies</h3>
+            <p class="eli5"><strong>ELI5:</strong> Guess-ometers for “how noisy,” without needing a perfect clean reference.</p>
+            <ul>
+              <li><strong>Residual std (5×5)</strong> — std after subtracting box blur</li>
+              <li><strong>Local std mean/median</strong> — neighborhood variability maps</li>
+            </ul>
+          </div>
+          <div class="docs-card">
+            <h3>Structural similarity (global SSIM-like)</h3>
+            <p class="eli5"><strong>ELI5:</strong> Did the big shapes stay the same even if we cleaned freckles of noise?</p>
+            <p>
+              Global (not windowed) SSIM-style score on luma and RGB. Near 1.0 means structure largely
+              preserved. Not identical to scikit-image multi-scale SSIM.
+            </p>
+          </div>
+        </section>
+
+        <section id="pipeline">
+          <h2>Processing pipeline (end-to-end)</h2>
+          <ol class="pipeline-steps">
+            <li>Decode upload → RGB float64 [0, 255]</li>
+            <li>Optional downscale for process if max side &gt; 4000 (analysis may still report original meta)</li>
+            <li>If category targets &gt; 0: search strength to match proxy reductions</li>
+            <li>Map strength → algorithm params; run hybrid / NLM / bilateral / Gaussian / median</li>
+            <li>Apply luminance + RGB offsets; clip</li>
+            <li>Optional scale if preserve_resolution is false</li>
+            <li>Encode JPEG; compute full compare report vs pre-denoise RGB</li>
+            <li>Client: undo step + IndexedDB session + library mirror to server</li>
+          </ol>
+        </section>
+
+        <section id="api">
+          <h2>HTTP API (summary)</h2>
+          <table class="docs-table">
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>GET</td>
+                <td><code>/api/health</code></td>
+                <td>Liveness</td>
+              </tr>
+              <tr>
+                <td>POST</td>
+                <td><code>/api/analyze</code></td>
+                <td>Upload → metrics + job_id</td>
+              </tr>
+              <tr>
+                <td>POST</td>
+                <td><code>/api/denoise</code></td>
+                <td>Denoise + full report</td>
+              </tr>
+              <tr>
+                <td>GET</td>
+                <td><code>/api/jobs/{id}/…</code></td>
+                <td>Source / output / download</td>
+              </tr>
+              <tr>
+                <td>GET/POST/DELETE</td>
+                <td><code>/api/library</code></td>
+                <td>Image repository</td>
+              </tr>
+              <tr>
+                <td>GET</td>
+                <td><code>/docs</code> (this page)</td>
+                <td>Human documentation</td>
+              </tr>
+              <tr>
+                <td>GET</td>
+                <td><code>/api/docs</code> (OpenAPI)</td>
+                <td>Swagger UI for HTTP API</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            Interactive machine API docs:
+            <a href="/api/docs">/api/docs</a> (FastAPI Swagger; app docs live at
+            <a href="/docs">/docs</a>).
+          </p>
+        </section>
+
+        <footer class="docs-footer">
+          <p>
+            PhotoEditor · <a href="/">Open editor</a> ·
+            <a href="https://github.com/orangefunguy/PhotoEditor">GitHub</a>
+          </p>
+        </footer>
+      </article>
+    </div>
+  </body>
+</html>

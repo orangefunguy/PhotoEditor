@@ -498,9 +498,9 @@ body.is-resizing-metrics img {
 
 .control-group label.group-label {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.45rem;
   margin-bottom: 0.45rem;
   font-size: 0.8rem;
   font-weight: 500;
@@ -512,6 +512,7 @@ body.is-resizing-metrics img {
   font-size: 0.72rem;
   color: var(--text-dim);
   font-family: var(--mono);
+  margin-left: auto;
 }
 
 .control-row {
@@ -1339,4 +1340,122 @@ select:focus {
   border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--bg);
+}
+
+/* ── ELI5 control tooltips ─────────────────────────────────────────── */
+.tip-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-left: 0.3rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.tip-icon:hover,
+.tip-icon:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.group-label .tip-icon {
+  order: 0;
+}
+
+.section-title .tip-icon {
+  margin-left: 0.4rem;
+  vertical-align: text-top;
+}
+
+.checkbox-row .tip-icon {
+  margin-left: auto;
+}
+
+.dropzone[data-tip] {
+  position: relative;
+}
+
+.dropzone .tip-icon {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  margin: 0;
+}
+
+.tip-inline {
+  display: inline-grid;
+  place-items: center;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.pe-tooltip {
+  position: fixed;
+  z-index: 1000;
+  width: min(280px, calc(100vw - 24px));
+  padding: 0.7rem 0.8rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(110, 168, 254, 0.35);
+  background: #121722;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  pointer-events: auto;
+}
+
+.pe-tooltip[hidden] {
+  display: none !important;
+}
+
+.pe-tooltip-title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 0.35rem;
+}
+
+.pe-tooltip-body {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.pe-tooltip-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.pe-tooltip-link:hover {
+  text-decoration: underline;
+}
+
+.help-text a,
+.footer-note a {
+  color: var(--accent);
+}
 }

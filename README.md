@@ -72,7 +72,11 @@ Or use the helper script:
 
 Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in your browser.
 
-The header badge shows **local** when the API is healthy.
+- **Editor:** [http://127.0.0.1:8000](http://127.0.0.1:8000)
+- **Documentation (tools & metrics):** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- **OpenAPI / Swagger:** [http://127.0.0.1:8000/api/docs](http://127.0.0.1:8000/api/docs)
+
+Hover any control’s **?** for an ELI5 tip. The header badge shows **local** when the API is healthy.
 
 ---
 
