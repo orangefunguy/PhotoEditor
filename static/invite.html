@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PhotoEditor — Complete invite</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/auth.css" />
+  </head>
+  <body class="auth-page">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-mark">PE</div>
+        <div>
+          <h1>Join workspace</h1>
+          <p>Set your name and password to finish your invite</p>
+        </div>
+      </div>
+      <div id="alert" class="auth-alert" hidden></div>
+      <form id="inviteForm" class="auth-form">
+        <label
+          >First name <input type="text" name="first_name" required autocomplete="given-name"
+        /></label>
+        <label
+          >Last name <input type="text" name="last_name" required autocomplete="family-name"
+        /></label>
+        <label
+          >Password
+          <input type="password" name="password" required minlength="10" autocomplete="new-password"
+        /></label>
+        <p class="auth-hint">
+          10+ characters with upper, lower, number, and special character.
+        </p>
+        <button type="submit" class="btn btn-primary btn-block">Complete profile &amp; enter</button>
+      </form>
+      <p class="auth-foot"><a href="/login">Already have an account? Sign in</a></p>
+    </div>
+    <script src="/static/js/auth-pages.js"></script>
+  </body>
+</html>

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PhotoEditor — Sign in</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/auth.css" />
+  </head>
+  <body class="auth-page">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-mark">PE</div>
+        <div>
+          <h1>PhotoEditor</h1>
+          <p id="subtitle">Sign in to your workspace</p>
+        </div>
+      </div>
+
+      <div id="alert" class="auth-alert" hidden></div>
+
+      <!-- First-time admin setup -->
+      <form id="setupForm" class="auth-form" hidden>
+        <p class="auth-lead">
+          Create the initial <strong>admin</strong> account. You can invite teammates by email after
+          signing in.
+        </p>
+        <label>Email <input type="email" name="email" required autocomplete="username" /></label>
+        <label
+          >First name <input type="text" name="first_name" required autocomplete="given-name"
+        /></label>
+        <label
+          >Last name <input type="text" name="last_name" required autocomplete="family-name"
+        /></label>
+        <label
+          >Password
+          <input type="password" name="password" required minlength="10" autocomplete="new-password"
+        /></label>
+        <p class="auth-hint">
+          10+ characters with upper, lower, number, and special character (CRM-style policy).
+        </p>
+        <button type="submit" class="btn btn-primary btn-block">Create admin &amp; sign in</button>
+      </form>
+
+      <!-- Login -->
+      <form id="loginForm" class="auth-form" hidden>
+        <label>Email <input type="email" name="email" required autocomplete="username" /></label>
+        <label
+          >Password
+          <input type="password" name="password" required autocomplete="current-password"
+        /></label>
+        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+      </form>
+
+      <p class="auth-foot">
+        Invited by email? Open the invite link from your admin, or ask them to resend it.
+      </p>
+    </div>
+    <script src="/static/js/auth-pages.js"></script>
+  </body>
+</html>

@@ -566,13 +566,19 @@
         ev.stopPropagation();
         const id = btn.getAttribute("data-lib-del");
         if (!confirm("Delete this image from the repository?")) return;
+        const serverId = Store.serverLibraryId ? Store.serverLibraryId(id) : id;
         await Store.deleteLibraryEntry(id);
         try {
-          await fetch(`/api/library/${id}`, { method: "DELETE" });
+          await fetch(`/api/library/${serverId}`, {
+            method: "DELETE",
+            credentials: "same-origin",
+          });
         } catch {
           /* offline */
         }
-        if (state.libraryEntryId === id) state.libraryEntryId = null;
+        if (state.libraryEntryId === id || state.libraryEntryId === serverId) {
+          state.libraryEntryId = null;
+        }
         renderLibraryPanel();
         refreshCacheMeta();
         setStatus("Removed from library");
@@ -582,29 +588,36 @@
 
   async function openLibraryEntry(id) {
     setStatus("Opening library entry…", "busy");
+    const serverId = Store.serverLibraryId ? Store.serverLibraryId(id) : id;
     let entry = await Store.getLibraryEntry(id);
     if (!entry || (!entry.sourceBlob && !entry.outputBlob)) {
       // fetch from server
       try {
-        const metaR = await fetch(`/api/library/${id}`);
+        const metaR = await fetch(`/api/library/${serverId}`, {
+          credentials: "same-origin",
+        });
         if (!metaR.ok) throw new Error("Not found");
         const meta = await metaR.json();
         let sourceBlob = null;
         let outputBlob = null;
         try {
-          const s = await fetch(`/api/library/${id}/source`);
+          const s = await fetch(`/api/library/${serverId}/source`, {
+            credentials: "same-origin",
+          });
           if (s.ok) sourceBlob = await s.blob();
         } catch {
           /* */
         }
         try {
-          const o = await fetch(`/api/library/${id}/output`);
+          const o = await fetch(`/api/library/${serverId}/output`, {
+            credentials: "same-origin",
+          });
           if (o.ok) outputBlob = await o.blob();
         } catch {
           /* */
         }
         entry = {
-          id,
+          id: serverId,
           filename: meta.filename,
           jobId: meta.job_id || meta.jobId,
           controls: meta.controls,
@@ -622,7 +635,7 @@
     }
 
     state.projectId = Store.uid();
-    state.libraryEntryId = id;
+    state.libraryEntryId = serverId;
     state.jobId = entry.jobId || null;
     state.filename = entry.filename;
     state.history = [];
@@ -2307,6 +2320,56 @@
   });
   els.zoomPctInput.addEventListener("change", () => scheduleSessionSave());
 
+  // ── Auth bootstrap (CRM-style session cookie) ──────────────────────
+  async function initAuth() {
+    try {
+      const r = await fetch("/api/auth/status", { credentials: "same-origin" });
+      const st = await r.json();
+      if (!st.authenticated) {
+        location.href = "/login?next=/";
+        return false;
+      }
+      const user = st.user;
+      const actor = st.actor || user;
+      if (Store?.setUserScope) Store.setUserScope(user.id);
+      const userBadge = document.getElementById("userBadge");
+      if (userBadge) {
+        userBadge.textContent = user.display_name || user.email;
+        userBadge.title = `${user.email} · ${user.role}`;
+      }
+      const adminLink = document.getElementById("adminLink");
+      if (adminLink && actor.is_admin) adminLink.hidden = false;
+
+      const bar = document.getElementById("viewAsBar");
+      const viewBadge = document.getElementById("viewAsBadge");
+      if (st.viewing_as_other) {
+        if (bar) {
+          bar.hidden = false;
+          document.getElementById("viewAsText").textContent =
+            `Admin view: showing ${user.display_name || user.email}'s workspace data`;
+        }
+        if (viewBadge) {
+          viewBadge.hidden = false;
+          viewBadge.classList.add("view-as");
+          viewBadge.textContent = `as ${user.email}`;
+        }
+      }
+      document.getElementById("btnStopViewAs")?.addEventListener("click", async () => {
+        await fetch("/api/auth/view-as", { method: "DELETE", credentials: "same-origin" });
+        location.reload();
+      });
+      document.getElementById("btnLogout")?.addEventListener("click", async () => {
+        await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+        location.href = "/login";
+      });
+      return true;
+    } catch (e) {
+      console.warn(e);
+      location.href = "/login";
+      return false;
+    }
+  }
+
   // Initial zoom UI + resizable metrics panel
   updateZoomUi();
   updateUndoRedoButtons();
@@ -2314,7 +2377,12 @@
 
   checkHealth();
   setInterval(checkHealth, 15000);
-  restoreSessionOnLoad();
+
+  initAuth().then((ok) => {
+    if (!ok) return;
+    restoreSessionOnLoad();
+  });
+
   // Persist before unload
   window.addEventListener("beforeunload", () => {
     // best-effort sync write is not available for IDB; fire-and-forget

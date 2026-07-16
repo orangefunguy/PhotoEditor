@@ -70,13 +70,31 @@ Or use the helper script:
 ./scripts/run.sh
 ```
 
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in your browser.
+Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in your browser — you will be redirected to **login**.
 
-- **Editor:** [http://127.0.0.1:8000](http://127.0.0.1:8000)
-- **Documentation (tools & metrics):** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- **OpenAPI / Swagger:** [http://127.0.0.1:8000/api/docs](http://127.0.0.1:8000/api/docs)
+| URL | Purpose |
+|-----|---------|
+| http://127.0.0.1:8000/login | Sign in / first-time admin setup |
+| http://127.0.0.1:8000/ | Editor (auth required) |
+| http://127.0.0.1:8000/admin | Workspace admin: invite users, view-as profiles |
+| http://127.0.0.1:8000/docs | Tool documentation (auth required) |
+| http://127.0.0.1:8000/api/docs | OpenAPI / Swagger |
 
 Hover any control’s **?** for an ELI5 tip. The header badge shows **local** when the API is healthy.
+
+### Authentication (CRM-style)
+
+PhotoEditor uses the same product flow as LeadForge CRM:
+
+1. **First visit** → create the **admin** account (email + strong password).
+2. **Admin** invites teammates by email from **Admin** (`/admin`).
+3. Invitees open the link, set name + password (**complete invite**), then use the app.
+4. Each profile has **isolated** uploads, outputs, library, and browser cache.
+5. **Admins** can **View profile data** for any workspace member (server-side `view-as` cookie) without sharing passwords.
+
+Password policy (aligned with CRM): 10+ chars, upper, lower, number, special character.
+
+Without SMTP, invite links are printed in the server console and appended to `data/invite_links.log`. Optional SMTP env vars are in `.env.example`.
 
 ---
 

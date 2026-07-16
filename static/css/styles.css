@@ -137,6 +137,28 @@ select {
   box-shadow: 0 0 8px var(--accent);
 }
 
+.view-as-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.45rem 1rem;
+  background: rgba(167, 139, 250, 0.15);
+  border-bottom: 1px solid rgba(167, 139, 250, 0.35);
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.view-as-bar .btn {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+}
+
+.badge.view-as {
+  border-color: var(--violet);
+  color: var(--violet);
+}
+
 .side-tabs {
   display: inline-flex;
   gap: 0.2rem;

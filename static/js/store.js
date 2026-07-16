@@ -16,6 +16,16 @@
   const MAX_LIBRARY = 100;
 
   let _db = null;
+  /** Active profile id — scopes IndexedDB keys so profiles don't share cache. */
+  let _userKey = "anon";
+
+  function setUserScope(userId) {
+    _userKey = userId || "anon";
+  }
+
+  function scoped(key) {
+    return `${_userKey}::${key}`;
+  }
 
   function openDb() {
     if (_db) return Promise.resolve(_db);
@@ -101,17 +111,18 @@
       ...session,
       savedAt: Date.now(),
       version: 1,
+      userId: _userKey,
     };
-    await kvSet("session", payload);
+    await kvSet(scoped("session"), payload);
     return payload;
   }
 
   async function loadSession() {
-    return (await kvGet("session")) || null;
+    return (await kvGet(scoped("session"))) || null;
   }
 
   async function clearSession() {
-    await kvDelete("session");
+    await kvDelete(scoped("session"));
   }
 
   // ── Active project history (undo stack) ──────────────────────────────
@@ -122,13 +133,13 @@
       hist.steps = hist.steps.slice(drop);
       hist.index = Math.max(0, hist.index - drop);
     }
-    await kvSet("history", hist);
+    await kvSet(scoped("history"), hist);
     return hist;
   }
 
   async function loadHistoryState() {
     return (
-      (await kvGet("history")) || {
+      (await kvGet(scoped("history"))) || {
         projectId: null,
         steps: [],
         index: -1,
@@ -137,7 +148,7 @@
   }
 
   async function clearHistoryState() {
-    await kvDelete("history");
+    await kvDelete(scoped("history"));
   }
 
   // ── Library (image repository) ───────────────────────────────────────
@@ -147,7 +158,9 @@
       const tx = db.transaction("library", "readonly");
       const req = tx.objectStore("library").getAll();
       req.onsuccess = () => {
-        const rows = req.result || [];
+        const rows = (req.result || []).filter(
+          (r) => r._userId === _userKey || String(r.id || "").startsWith(`${_userKey}:`)
+        );
         rows.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
         resolve(rows);
       };
@@ -157,18 +170,40 @@
 
   async function getLibraryEntry(id) {
     const db = await openDb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("library", "readonly");
-      const req = tx.objectStore("library").get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
+    const candidates = [];
+    if (id) {
+      candidates.push(id);
+      if (!String(id).startsWith(`${_userKey}:`)) candidates.push(`${_userKey}:${id}`);
+    }
+    for (const key of candidates) {
+      // sequential lookups (IDB get is fast)
+      // eslint-disable-next-line no-await-in-loop
+      const hit = await new Promise((resolve, reject) => {
+        const tx = db.transaction("library", "readonly");
+        const req = tx.objectStore("library").get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function serverLibraryId(id) {
+    if (!id) return id;
+    const prefix = `${_userKey}:`;
+    return String(id).startsWith(prefix) ? String(id).slice(prefix.length) : id;
   }
 
   async function putLibraryEntry(entry) {
     const db = await openDb();
     const tx = db.transaction("library", "readwrite");
-    tx.objectStore("library").put(entry);
+    // Scope library rows by user so profiles stay isolated in one browser
+    const row = { ...entry, _userId: _userKey };
+    if (row.id && !String(row.id).startsWith(`${_userKey}:`)) {
+      row.id = `${_userKey}:${row.id}`;
+    }
+    tx.objectStore("library").put(row);
     await txDone(tx);
 
     // Enforce max library size (drop oldest)
@@ -219,6 +254,8 @@
   global.PEStore = {
     uid,
     blobFromUrl,
+    setUserScope,
+    serverLibraryId,
     saveSession,
     loadSession,
     clearSession,

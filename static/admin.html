@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PhotoEditor — Workspace admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/auth.css" />
+  </head>
+  <body class="auth-page admin-page">
+    <header class="app-header">
+      <div class="brand">
+        <a class="brand-mark" href="/">PE</a>
+        <div>
+          <h1>Workspace admin</h1>
+          <p id="adminSub">Invite users and view profiles</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <a class="btn" href="/">← Editor</a>
+        <button type="button" class="btn btn-ghost" id="btnLogout">Sign out</button>
+      </div>
+    </header>
+
+    <main class="admin-layout">
+      <section class="panel">
+        <div class="panel-header"><h2>Invite by email</h2></div>
+        <div class="panel-body">
+          <p class="help-text">
+            CRM-style flow: invite creates a pending profile and email link. Without SMTP, the link
+            is shown here and written to <code>data/invite_links.log</code>.
+          </p>
+          <form id="inviteForm" class="auth-form" style="margin: 0">
+            <label>Email <input type="email" name="email" required /></label>
+            <label
+              >Role
+              <select name="role">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <button type="submit" class="btn btn-primary btn-block">Send invite</button>
+          </form>
+          <div id="inviteResult" class="auth-alert" hidden style="margin-top: 0.75rem"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Workspace members</h2>
+          <button type="button" class="btn" id="btnRefresh">Refresh</button>
+        </div>
+        <div class="panel-body">
+          <div id="viewAsBanner" class="auth-alert" hidden></div>
+          <div id="usersTable" class="users-table">Loading…</div>
+        </div>
+      </section>
+    </main>
+    <script src="/static/js/admin.js"></script>
+  </body>
+</html>

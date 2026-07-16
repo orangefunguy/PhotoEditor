@@ -1,8 +1,4 @@
-"""Server-side image repository for PhotoEditor.
-
-Persists created/edited images under library/ with a change log so work
-survives browser cache clears when the same local server is used.
-"""
+"""Server-side image repository for PhotoEditor (per-user isolation)."""
 
 from __future__ import annotations
 
@@ -14,42 +10,50 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-LIBRARY = ROOT / "library"
-INDEX_PATH = LIBRARY / "index.json"
+LIBRARY_ROOT = ROOT / "library"
 
 
-def _ensure() -> None:
-    LIBRARY.mkdir(exist_ok=True)
-    if not INDEX_PATH.exists():
-        INDEX_PATH.write_text("[]", encoding="utf-8")
+def _user_root(user_id: str) -> Path:
+    return LIBRARY_ROOT / user_id
 
 
-def _read_index() -> list[dict[str, Any]]:
-    _ensure()
+def _ensure_user(user_id: str) -> Path:
+    d = _user_root(user_id)
+    d.mkdir(parents=True, exist_ok=True)
+    index = d / "index.json"
+    if not index.exists():
+        index.write_text("[]", encoding="utf-8")
+    return d
+
+
+def _index_path(user_id: str) -> Path:
+    return _ensure_user(user_id) / "index.json"
+
+
+def _read_index(user_id: str) -> list[dict[str, Any]]:
     try:
-        data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+        data = json.loads(_index_path(user_id).read_text(encoding="utf-8"))
         return data if isinstance(data, list) else []
     except (json.JSONDecodeError, OSError):
         return []
 
 
-def _write_index(rows: list[dict[str, Any]]) -> None:
-    _ensure()
-    INDEX_PATH.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+def _write_index(user_id: str, rows: list[dict[str, Any]]) -> None:
+    _index_path(user_id).write_text(json.dumps(rows, indent=2), encoding="utf-8")
 
 
-def _entry_dir(entry_id: str) -> Path:
-    return LIBRARY / entry_id
+def _entry_dir(user_id: str, entry_id: str) -> Path:
+    return _user_root(user_id) / entry_id
 
 
-def list_entries() -> list[dict[str, Any]]:
-    rows = _read_index()
+def list_entries(user_id: str) -> list[dict[str, Any]]:
+    rows = _read_index(user_id)
     rows.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
     return rows
 
 
-def get_entry(entry_id: str) -> dict[str, Any] | None:
-    d = _entry_dir(entry_id)
+def get_entry(user_id: str, entry_id: str) -> dict[str, Any] | None:
+    d = _entry_dir(user_id, entry_id)
     meta_path = d / "meta.json"
     if not meta_path.exists():
         return None
@@ -65,11 +69,13 @@ def get_entry(entry_id: str) -> dict[str, Any] | None:
             meta["history"] = []
     meta["has_source"] = (d / "source.jpg").exists() or (d / "source.bin").exists()
     meta["has_output"] = (d / "output.jpg").exists()
+    meta["user_id"] = user_id
     return meta
 
 
 def save_entry(
     *,
+    user_id: str,
     entry_id: str | None,
     filename: str | None,
     job_id: str | None,
@@ -80,23 +86,21 @@ def save_entry(
     output_bytes: bytes | None,
     source_ext: str = ".jpg",
 ) -> dict[str, Any]:
-    _ensure()
+    _ensure_user(user_id)
     eid = entry_id or secrets.token_hex(8)
-    d = _entry_dir(eid)
+    d = _entry_dir(user_id, eid)
     d.mkdir(exist_ok=True)
     now = time.time()
 
-    existing = get_entry(eid)
+    existing = get_entry(user_id, eid)
     created = existing.get("created_at", now) if existing else now
 
     if source_bytes:
         ext = source_ext if source_ext.startswith(".") else f".{source_ext}"
-        # Normalize common cases
         if ext.lower() in (".jpeg", ".jpg"):
             (d / "source.jpg").write_bytes(source_bytes)
         else:
             (d / f"source{ext}").write_bytes(source_bytes)
-            # also keep a copy path hint
             (d / "source.bin").write_bytes(source_bytes)
 
     if output_bytes:
@@ -107,6 +111,7 @@ def save_entry(
 
     meta: dict[str, Any] = {
         "id": eid,
+        "user_id": user_id,
         "filename": filename or (existing or {}).get("filename") or "image",
         "job_id": job_id or (existing or {}).get("job_id"),
         "created_at": created,
@@ -117,8 +122,7 @@ def save_entry(
     }
     (d / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    # Update index (lightweight, no blobs)
-    rows = [r for r in _read_index() if r.get("id") != eid]
+    rows = [r for r in _read_index(user_id) if r.get("id") != eid]
     rows.append(
         {
             "id": eid,
@@ -130,36 +134,36 @@ def save_entry(
             "report_summary": meta.get("report_summary"),
         }
     )
-    # Cap index at 200
     rows.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
     if len(rows) > 200:
         for stale in rows[200:]:
-            delete_entry(stale["id"])
+            delete_entry(user_id, stale["id"])
         rows = rows[:200]
-    _write_index(rows)
-    return get_entry(eid) or meta
+    _write_index(user_id, rows)
+    return get_entry(user_id, eid) or meta
 
 
-def delete_entry(entry_id: str) -> bool:
-    d = _entry_dir(entry_id)
+def delete_entry(user_id: str, entry_id: str) -> bool:
+    d = _entry_dir(user_id, entry_id)
     if d.exists():
         shutil.rmtree(d, ignore_errors=True)
-    rows = [r for r in _read_index() if r.get("id") != entry_id]
-    _write_index(rows)
+    rows = [r for r in _read_index(user_id) if r.get("id") != entry_id]
+    _write_index(user_id, rows)
     return True
 
 
-def clear_all() -> int:
-    rows = _read_index()
+def clear_all(user_id: str) -> int:
+    rows = _read_index(user_id)
     n = len(rows)
-    if LIBRARY.exists():
-        shutil.rmtree(LIBRARY, ignore_errors=True)
-    _ensure()
+    root = _user_root(user_id)
+    if root.exists():
+        shutil.rmtree(root, ignore_errors=True)
+    _ensure_user(user_id)
     return n
 
 
-def resolve_image(entry_id: str, kind: str) -> Path | None:
-    d = _entry_dir(entry_id)
+def resolve_image(user_id: str, entry_id: str, kind: str) -> Path | None:
+    d = _entry_dir(user_id, entry_id)
     if kind == "output":
         p = d / "output.jpg"
         return p if p.exists() else None
@@ -168,7 +172,6 @@ def resolve_image(entry_id: str, kind: str) -> Path | None:
             p = d / name
             if p.exists():
                 return p
-        # any source*
         for p in d.glob("source*"):
             if p.is_file():
                 return p

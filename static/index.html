@@ -26,14 +26,19 @@
           <button type="button" class="btn" id="btnUndo" title="Undo last change (⌘Z)" disabled>Undo</button>
           <button type="button" class="btn" id="btnRedo" title="Redo (⌘⇧Z)" disabled>Redo</button>
         </div>
+        <span class="badge" id="userBadge" title="Signed-in profile">…</span>
+        <span class="badge" id="viewAsBadge" hidden title="Admin viewing another profile"></span>
         <span class="badge" id="cacheBadge" title="Session cache status"><span class="dot"></span> cache</span>
         <span class="badge" id="healthBadge"><span class="dot"></span> offline</span>
+        <a class="btn" href="/admin" id="adminLink" hidden title="Workspace admin">Admin</a>
         <a class="btn" href="/docs" title="Tool documentation">Docs</a>
-        <a class="btn btn-ghost" href="https://github.com/orangefunguy/PhotoEditor" target="_blank" rel="noopener"
-          >GitHub</a
-        >
+        <button type="button" class="btn btn-ghost" id="btnLogout">Sign out</button>
       </div>
     </header>
+    <div id="viewAsBar" class="view-as-bar" hidden>
+      <span id="viewAsText"></span>
+      <button type="button" class="btn" id="btnStopViewAs">Return to my profile</button>
+    </div>
 
     <main class="app-shell">
       <!-- Left: upload + controls -->

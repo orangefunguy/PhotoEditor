@@ -15,6 +15,7 @@ build/
 uploads/
 outputs/
 library/
+data/
 tmp/
 *.log
 
