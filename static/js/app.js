@@ -177,47 +177,93 @@
     if (els.dropzone) els.dropzone.classList.remove("is-uploading");
   }
 
-  /** POST FormData with upload progress (XHR). Returns parsed JSON. */
-  function postFormWithUploadProgress(url, formData, { onProgress } = {}) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", url);
-      xhr.withCredentials = true;
-      xhr.responseType = "json";
-      xhr.upload.onprogress = (e) => {
-        if (!e.lengthComputable) {
-          if (onProgress) onProgress(null, "Uploading…");
-          return;
+  function isTransientHttpStatus(status) {
+    return status === 502 || status === 503 || status === 504 || status === 0;
+  }
+
+  /** fetch() with retries for free-tier cold starts / gateway blips. */
+  async function fetchWithRetry(url, opts = {}, { retries = 4, baseDelayMs = 800 } = {}) {
+    let lastErr;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch(url, { credentials: "same-origin", ...opts });
+        if (isTransientHttpStatus(r.status) && attempt < retries) {
+          await new Promise((res) => setTimeout(res, baseDelayMs * attempt));
+          continue;
         }
-        const pct = (e.loaded / e.total) * 100;
-        if (onProgress) onProgress(pct, "Uploading image…");
-      };
-      xhr.upload.onload = () => {
-        if (onProgress) onProgress(100, "Upload complete · analyzing…");
-      };
-      xhr.onerror = () => reject(new Error("Network error during upload."));
-      xhr.onabort = () => reject(new Error("Upload aborted."));
-      xhr.onload = () => {
-        const status = xhr.status;
-        const data = xhr.response;
-        if (status >= 200 && status < 300) {
-          resolve(data && typeof data === "object" ? data : {});
-          return;
-        }
-        let msg = xhr.statusText || `HTTP ${status}`;
-        try {
-          const body = data || JSON.parse(xhr.responseText || "{}");
-          if (typeof body.detail === "string") msg = body.detail;
-          else if (Array.isArray(body.detail)) {
-            msg = body.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+        return r;
+      } catch (e) {
+        lastErr = e;
+        if (attempt >= retries) throw e;
+        await new Promise((res) => setTimeout(res, baseDelayMs * attempt));
+      }
+    }
+    throw lastErr || new Error("Request failed");
+  }
+
+  /** POST FormData with upload progress (XHR). Returns parsed JSON. Retries transient gateway errors. */
+  function postFormWithUploadProgress(url, formData, { onProgress, retries = 3 } = {}) {
+    const attemptOnce = () =>
+      new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url);
+        xhr.withCredentials = true;
+        xhr.responseType = "json";
+        xhr.upload.onprogress = (e) => {
+          if (!e.lengthComputable) {
+            if (onProgress) onProgress(null, "Uploading…");
+            return;
           }
-        } catch {
-          /* ignore */
+          const pct = (e.loaded / e.total) * 100;
+          if (onProgress) onProgress(pct, "Uploading image…");
+        };
+        xhr.upload.onload = () => {
+          if (onProgress) onProgress(100, "Upload complete · analyzing…");
+        };
+        xhr.onerror = () => reject(new Error("Network error during upload."));
+        xhr.onabort = () => reject(new Error("Upload aborted."));
+        xhr.onload = () => {
+          const status = xhr.status;
+          const data = xhr.response;
+          if (status >= 200 && status < 300) {
+            resolve(data && typeof data === "object" ? data : {});
+            return;
+          }
+          let msg = xhr.statusText || `HTTP ${status}`;
+          try {
+            const body = data || JSON.parse(xhr.responseText || "{}");
+            if (typeof body.detail === "string") msg = body.detail;
+            else if (Array.isArray(body.detail)) {
+              msg = body.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+            }
+          } catch {
+            /* ignore */
+          }
+          const err = new Error(msg);
+          err.status = status;
+          reject(err);
+        };
+        xhr.send(formData);
+      });
+
+    return (async () => {
+      let lastErr;
+      for (let i = 1; i <= retries; i++) {
+        try {
+          return await attemptOnce();
+        } catch (e) {
+          lastErr = e;
+          const st = e && e.status;
+          if (i < retries && (isTransientHttpStatus(st) || /network|gateway|502|503/i.test(String(e.message)))) {
+            if (onProgress) onProgress(null, "Server waking up — retrying…");
+            await new Promise((r) => setTimeout(r, 900 * i));
+            continue;
+          }
+          throw e;
         }
-        reject(new Error(msg));
-      };
-      xhr.send(formData);
-    });
+      }
+      throw lastErr;
+    })();
   }
 
   function trackUrl(url) {
@@ -451,7 +497,7 @@
     const next = { ...step };
     if (!isUsableBlob(next.sourceBlob) && next.jobId) {
       try {
-        const r = await fetch(`/api/jobs/${next.jobId}/source`, {
+        const r = await fetchWithRetry(`/api/jobs/${next.jobId}/source`, {
           credentials: "same-origin",
         });
         if (r.ok) next.sourceBlob = await r.blob();
@@ -461,7 +507,7 @@
     }
     if (!isUsableBlob(next.outputBlob) && next.jobId) {
       try {
-        const r = await fetch(`/api/jobs/${next.jobId}/output`, {
+        const r = await fetchWithRetry(`/api/jobs/${next.jobId}/output`, {
           credentials: "same-origin",
         });
         if (r.ok) next.outputBlob = await r.blob();
@@ -2067,11 +2113,44 @@
 
     if (els.placeholder) els.placeholder.hidden = true;
 
-    const bindError = (el) => {
+    /**
+     * Retry network image loads (cold start / 502) before giving up.
+     * Blob URLs don't get retries — those are local failures.
+     */
+    const bindError = (el, url, { role = "source" } = {}) => {
       if (!el) return;
+      el.dataset.loadAttempts = "0";
       el.onerror = () => {
-        // Broken URL (expired job, revoked blob, 401) → clean blank stage
-        console.warn("Preview image failed to load", el.currentSrc || el.src);
+        const attempts = Number(el.dataset.loadAttempts || "0") + 1;
+        el.dataset.loadAttempts = String(attempts);
+        const src = el.currentSrc || el.src || url || "";
+        const isBlob = src.startsWith("blob:") || src.startsWith("data:");
+        console.warn("Preview image failed to load", src, "attempt", attempts);
+
+        if (!isBlob && attempts < 4) {
+          setStatus(
+            attempts === 1
+              ? "Loading preview (server may be waking up)…"
+              : `Still loading preview… (try ${attempts}/3)`,
+            "busy"
+          );
+          const base = String(url || src).split("?")[0];
+          const retryUrl = `${base}?t=${Date.now()}&r=${attempts}`;
+          setTimeout(() => {
+            el.src = retryUrl;
+          }, 700 * attempts);
+          return;
+        }
+
+        // Prefer soft status over wiping a workspace that already has blobs
+        if (state.file || (state.history && state.history.length)) {
+          setStatus(
+            "Preview URL failed after retries. Your image is still in session — try History or reload.",
+            "warning",
+            { source: "app", meta: { role, url: src } }
+          );
+          return;
+        }
         showBlankWorkspace(
           "Preview image could not be loaded. Drop an image or re-open from History/Library."
         );
@@ -2088,8 +2167,8 @@
       const onReady = () => onImageNaturalReady(els.compareBefore);
       els.compareBefore.onload = onReady;
       els.compareAfter.onload = null;
-      bindError(els.compareBefore);
-      bindError(els.compareAfter);
+      bindError(els.compareBefore, state.sourceUrl, { role: "source" });
+      bindError(els.compareAfter, state.outputUrl, { role: "output" });
       els.compareBefore.src = state.sourceUrl;
       els.compareAfter.src = state.outputUrl;
       if (els.compareBefore.complete && els.compareBefore.naturalWidth) onReady();
@@ -2112,7 +2191,7 @@
     }
     const onReady = () => onImageNaturalReady(img);
     img.onload = onReady;
-    bindError(img);
+    bindError(img, url, { role: state.view === "output" ? "output" : "source" });
     const prev = img.getAttribute("src");
     if (prev === url && img.complete && img.naturalWidth) {
       onReady();
@@ -2124,10 +2203,10 @@
   // ── API ─────────────────────────────────────────────────────────────
   async function checkHealth() {
     try {
-      const r = await fetch("/api/health");
+      const r = await fetchWithRetry("/api/health", {}, { retries: 2, baseDelayMs: 500 });
       if (!r.ok) throw new Error("bad");
       els.healthBadge.classList.add("ok");
-      els.healthBadge.innerHTML = '<span class="dot"></span> local';
+      els.healthBadge.innerHTML = '<span class="dot"></span> online';
     } catch {
       els.healthBadge.classList.remove("ok");
       els.healthBadge.innerHTML = '<span class="dot"></span> offline';
@@ -2175,7 +2254,8 @@
       state.filename = file.name;
       state.sourceMetrics = data.metrics;
       state.report = null;
-      state.sourceUrl = data.preview_url + `?t=${Date.now()}`;
+      // Prefer local blob URL for instant, reliable first paint (avoid cold-start 502 on /api/jobs/…/source)
+      state.sourceUrl = urlFromBlob(file);
       state.outputUrl = null;
       state.view = "source";
       state.fitOnLoad = true;
@@ -2321,11 +2401,11 @@
     fd.append("controls_json", JSON.stringify(controls));
     try {
       setProgressUI(Math.max(_progressValue, 18), "Uploading & starting filter…");
-      const r = await fetch("/api/denoise", {
-        method: "POST",
-        body: fd,
-        credentials: "same-origin",
-      });
+      const r = await fetchWithRetry(
+        "/api/denoise",
+        { method: "POST", body: fd },
+        { retries: 3, baseDelayMs: 1200 }
+      );
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
         throw new Error(typeof err.detail === "string" ? err.detail : r.statusText);
@@ -2335,8 +2415,27 @@
       setProgressUI(94, "Updating preview…");
       state.jobId = data.job_id;
       state.report = data.report;
-      state.sourceUrl = data.source_url + `?t=${Date.now()}`;
-      state.outputUrl = data.output_url;
+
+      // Keep local source blob URL when available; only fetch remote as fallback
+      let sourceBlob = state.file;
+      if (!sourceBlob && Store) {
+        sourceBlob = await Store.blobFromUrl(data.source_url);
+      }
+      let outputBlob = null;
+      if (Store) {
+        outputBlob = await Store.blobFromUrl(data.output_url);
+      }
+
+      if (sourceBlob) {
+        state.sourceUrl = urlFromBlob(sourceBlob);
+      } else if (data.source_url) {
+        state.sourceUrl = data.source_url + `?t=${Date.now()}`;
+      }
+      if (outputBlob) {
+        state.outputUrl = urlFromBlob(outputBlob);
+      } else if (data.output_url) {
+        state.outputUrl = data.output_url;
+      }
       state.view = "compare";
       $$("#viewToggle button").forEach((b) =>
         b.classList.toggle("active", b.dataset.view === "compare")
@@ -2344,7 +2443,14 @@
       els.jobBadge.textContent = data.job_id;
       els.btnDownload.disabled = false;
       els.btnDownload.onclick = () => {
-        window.location.href = data.download_url;
+        if (state.outputUrl && state.outputUrl.startsWith("blob:")) {
+          const a = document.createElement("a");
+          a.href = state.outputUrl;
+          a.download = `photoeditor_${state.jobId || "edit"}_denoised.jpg`;
+          a.click();
+        } else {
+          window.location.href = data.download_url;
+        }
       };
       refreshMetrics();
       setPreview();
@@ -2356,11 +2462,6 @@
       const summary = `PSNR ${fmtNum(psnr)} dB · HF ${fmtNum(hf)}% · ${algo} ${strength}%`;
 
       setProgressUI(97, "Saving history…");
-      // Capture blobs for undo / repository
-      let sourceBlob = state.file;
-      if (!sourceBlob && Store) sourceBlob = await Store.blobFromUrl(state.sourceUrl);
-      let outputBlob = null;
-      if (Store) outputBlob = await Store.blobFromUrl(state.outputUrl);
 
       await pushHistoryStep({
         id: Store ? Store.uid() : String(Date.now()),
@@ -2756,7 +2857,12 @@
   // ── Auth bootstrap (session cookie) ──────────────────────────────
   async function initAuth() {
     try {
-      const r = await fetch("/api/auth/status", { credentials: "same-origin" });
+      const r = await fetchWithRetry(
+        "/api/auth/status",
+        { credentials: "same-origin" },
+        { retries: 4, baseDelayMs: 900 }
+      );
+      if (!r.ok) throw new Error(`Auth status ${r.status}`);
       const st = await r.json();
       if (!st.authenticated) {
         location.href = "/login?next=/";

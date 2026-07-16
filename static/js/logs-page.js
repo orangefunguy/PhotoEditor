@@ -4,10 +4,35 @@
   const $ = (s) => document.querySelector(s);
   const Log = window.PELog;
 
+  async function fetchAuthStatus() {
+    let lastErr;
+    for (let i = 1; i <= 5; i++) {
+      try {
+        const r = await fetch("/api/auth/status", { credentials: "same-origin" });
+        // Retry cold-start gateway statuses
+        if (r.status === 502 || r.status === 503 || r.status === 504) {
+          lastErr = new Error(`Server starting up (${r.status})`);
+          await new Promise((res) => setTimeout(res, 800 * i));
+          continue;
+        }
+        const st = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          throw new Error(
+            typeof st.detail === "string" ? st.detail : `Auth check failed (${r.status})`
+          );
+        }
+        return st;
+      } catch (e) {
+        lastErr = e;
+        if (i < 5) await new Promise((res) => setTimeout(res, 800 * i));
+      }
+    }
+    throw lastErr || new Error("Could not reach server");
+  }
+
   async function initAuthScope() {
     try {
-      const r = await fetch("/api/auth/status", { credentials: "same-origin" });
-      const st = await r.json();
+      const st = await fetchAuthStatus();
       if (!st.authenticated) {
         location.href = "/login?next=/logs";
         return false;
@@ -18,8 +43,18 @@
         sub.textContent = `${st.user.display_name || st.user.email} · errors & warnings only`;
       }
       return true;
-    } catch {
-      location.href = "/login?next=/logs";
+    } catch (e) {
+      const list = $("#logList");
+      if (list) {
+        list.innerHTML = `<div class="empty-metrics">
+          Could not verify session (${escapeHtml(e.message || "network error")}).
+          <p style="margin-top:0.75rem">
+            <button type="button" class="btn btn-primary" id="btnRetryLogs">Retry</button>
+            <a class="btn" href="/login?next=/logs">Sign in</a>
+          </p>
+        </div>`;
+        $("#btnRetryLogs")?.addEventListener("click", () => location.reload());
+      }
       return false;
     }
   }
@@ -85,6 +120,15 @@
     Log?.clear();
     render();
   });
+
+  // Logs are localStorage-only; still show them if auth is slow
+  if (Log) {
+    try {
+      render();
+    } catch {
+      /* ignore until scoped */
+    }
+  }
 
   initAuthScope().then((ok) => {
     if (ok) render();

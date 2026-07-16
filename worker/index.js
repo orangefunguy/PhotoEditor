@@ -1,11 +1,17 @@
 /**
  * Cloudflare Worker — edge proxy + durable auth store for editor.herooflegend.com
  *
- * - Proxies app traffic to the Render origin
+ * - Proxies app traffic to the Render origin with cold-start retries
  * - Stores auth snapshots in KV so accounts/sessions survive free-tier restarts
+ * - Cron keep-alive pings the origin so free-tier spin-down is less frequent
  */
 
 const SNAPSHOT_KEY = "auth:v1:snapshot";
+
+/** Render free can take a while to wake; retry within Worker wall-time limits. */
+const ORIGIN_ATTEMPTS = 4;
+const ORIGIN_RETRY_BASE_MS = 1200;
+const ORIGIN_ATTEMPT_TIMEOUT_MS = 18000;
 
 export default {
   async fetch(request, env) {
@@ -18,7 +24,31 @@ export default {
 
     return proxyToOrigin(request, env, incoming);
   },
+
+  async scheduled(_event, env, ctx) {
+    // Keep free-tier origin warm
+    ctx.waitUntil(warmOrigin(env));
+  },
 };
+
+/**
+ * @param {{ API_ORIGIN?: string }} env
+ */
+async function warmOrigin(env) {
+  const originBase = (env.API_ORIGIN || "https://photoeditor-oiom.onrender.com").replace(
+    /\/$/,
+    ""
+  );
+  try {
+    await fetch(`${originBase}/healthz`, {
+      method: "GET",
+      headers: { "User-Agent": "PhotoEditor-KeepAlive/1.0" },
+      redirect: "manual",
+    });
+  } catch {
+    /* ignore — next browser request will retry */
+  }
+}
 
 /**
  * @param {Request} request
@@ -131,6 +161,10 @@ async function proxyToOrigin(request, env, incoming) {
   headers.delete("cf-visitor");
   headers.delete("cf-ipcountry");
   headers.delete("content-length");
+  // Avoid Cloudflare bot-score quirks when re-fetching origin
+  if (!headers.get("User-Agent")) {
+    headers.set("User-Agent", "PhotoEditor-Edge/1.0");
+  }
 
   const clientIp = request.headers.get("CF-Connecting-IP");
   if (clientIp) {
@@ -140,31 +174,136 @@ async function proxyToOrigin(request, env, incoming) {
   headers.set("X-Forwarded-Proto", "https");
   headers.set("X-Forwarded-Host", incoming.host);
 
-  /** @type {RequestInit} */
-  const init = {
-    method: request.method,
-    headers,
-    redirect: "manual",
-  };
-
+  // Buffer body once so we can retry non-GET methods
+  let bodyBuf = null;
   if (request.method !== "GET" && request.method !== "HEAD") {
-    init.body = await request.arrayBuffer();
+    bodyBuf = await request.arrayBuffer();
   }
 
-  let response;
-  try {
-    response = await fetch(targetUrl, init);
-  } catch (err) {
+  let lastErr = null;
+  let lastStatus = 0;
+
+  for (let attempt = 1; attempt <= ORIGIN_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ORIGIN_ATTEMPT_TIMEOUT_MS);
+    try {
+      /** @type {RequestInit} */
+      const init = {
+        method: request.method,
+        headers,
+        redirect: "manual",
+        signal: controller.signal,
+        // cf property is Worker-specific
+        cf: {
+          cacheTtl: 0,
+          cacheEverything: false,
+        },
+      };
+      if (bodyBuf) {
+        init.body = bodyBuf;
+      }
+
+      const response = await fetch(targetUrl, init);
+      clearTimeout(timer);
+
+      // Retry typical cold-start / gateway failures from origin or intermediate
+      if (shouldRetryOrigin(response.status) && attempt < ORIGIN_ATTEMPTS) {
+        lastStatus = response.status;
+        // Drain body so connection can close cleanly
+        try {
+          await response.arrayBuffer();
+        } catch {
+          /* ignore */
+        }
+        await sleep(ORIGIN_RETRY_BASE_MS * attempt);
+        continue;
+      }
+
+      return rewriteOriginResponse(response, originBase, incoming);
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt < ORIGIN_ATTEMPTS) {
+        await sleep(ORIGIN_RETRY_BASE_MS * attempt);
+        continue;
+      }
+    }
+  }
+
+  const detail =
+    lastErr && lastErr.message
+      ? String(lastErr.message)
+      : lastStatus
+        ? `origin returned ${lastStatus}`
+        : "origin unreachable";
+
+  // Browser navigations get a readable HTML page; API/XHR get JSON
+  const accept = request.headers.get("Accept") || "";
+  const wantsHtml =
+    request.method === "GET" && accept.includes("text/html") && !incoming.pathname.startsWith("/api/");
+
+  if (wantsHtml) {
     return new Response(
-      JSON.stringify({
-        detail: "PhotoEditor origin unreachable",
-        origin: originBase,
-        error: String(err && err.message ? err.message : err),
-      }),
-      { status: 502, headers: { "Content-Type": "application/json" } }
+      `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PhotoEditor — starting up</title>
+  <style>
+    body{font-family:system-ui,sans-serif;background:#0f1419;color:#e7ecf1;display:grid;place-items:center;min-height:100vh;margin:0}
+    .card{max-width:28rem;padding:1.5rem 1.75rem;border:1px solid #2a3540;border-radius:12px;background:#151b22}
+    h1{font-size:1.15rem;margin:0 0 .5rem}
+    p{margin:.4rem 0;line-height:1.45;color:#a8b3bf;font-size:.95rem}
+    button{margin-top:1rem;padding:.55rem 1rem;border-radius:8px;border:0;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer}
+    code{font-size:.8rem;color:#94a3b8}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>PhotoEditor is waking up</h1>
+    <p>The host was idle and is starting. This usually takes a few seconds on free hosting.</p>
+    <p><code>${escapeHtml(detail)}</code></p>
+    <button type="button" onclick="location.reload()">Try again</button>
+  </div>
+  <script>setTimeout(function(){location.reload()},4000)</script>
+</body>
+</html>`,
+      {
+        status: 503,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Retry-After": "5",
+        },
+      }
     );
   }
 
+  return new Response(
+    JSON.stringify({
+      detail: "PhotoEditor origin temporarily unavailable (cold start or network).",
+      origin: originBase,
+      error: detail,
+      retryable: true,
+    }),
+    {
+      status: 503,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "Retry-After": "5",
+      },
+    }
+  );
+}
+
+/**
+ * @param {Response} response
+ * @param {string} originBase
+ * @param {URL} incoming
+ */
+function rewriteOriginResponse(response, originBase, incoming) {
   const outHeaders = new Headers(response.headers);
   const location = outHeaders.get("Location");
   if (location) {
@@ -184,11 +323,49 @@ async function proxyToOrigin(request, env, incoming) {
   outHeaders.delete("content-encoding");
   outHeaders.delete("content-length");
 
+  // Don't let browsers/CF cache error or auth-sensitive HTML/API
+  const ct = (outHeaders.get("Content-Type") || "").toLowerCase();
+  if (
+    response.status >= 400 ||
+    ct.includes("text/html") ||
+    ct.includes("application/json")
+  ) {
+    outHeaders.set("Cache-Control", "no-store");
+  }
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers: outHeaders,
   });
+}
+
+/** @param {number} status */
+function shouldRetryOrigin(status) {
+  return (
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    status === 520 ||
+    status === 521 ||
+    status === 522 ||
+    status === 523 ||
+    status === 524
+  );
+}
+
+/** @param {number} ms */
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** @param {string} s */
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /**
@@ -198,7 +375,7 @@ async function proxyToOrigin(request, env, incoming) {
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 }
 
@@ -213,7 +390,6 @@ function timingSafeEqual(a, b) {
   const ba = enc.encode(a);
   const bb = enc.encode(b);
   if (ba.length !== bb.length) {
-    // Still walk to reduce length-oracle timing; always false
     let diff = ba.length ^ bb.length;
     const n = Math.max(ba.length, bb.length);
     for (let i = 0; i < n; i++) {

@@ -449,6 +449,20 @@ def get_job(job_id: str, ctx: AuthContext = Depends(require_auth)) -> JSONRespon
     raise HTTPException(404, "Job not found.")
 
 
+def _image_media_type(path: Path) -> str:
+    ext = path.suffix.lower()
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+        ".bmp": "image/bmp",
+    }.get(ext, "image/jpeg")
+
+
 @app.get("/api/jobs/{job_id}/source")
 def get_source(job_id: str, ctx: AuthContext = Depends(require_auth)) -> Response:
     uid = ctx.data_user_id
@@ -464,7 +478,13 @@ def get_source(job_id: str, ctx: AuthContext = Depends(require_auth)) -> Respons
         path = candidates[0] if candidates else None
     if not path or not path.exists():
         raise HTTPException(404, "Source image not found.")
-    return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+    # Proper image/* type so <img src="/api/jobs/…/source"> works on first paint
+    return FileResponse(
+        path,
+        media_type=_image_media_type(path),
+        filename=path.name,
+        headers={"Cache-Control": "private, max-age=60"},
+    )
 
 
 @app.get("/api/jobs/{job_id}/output")

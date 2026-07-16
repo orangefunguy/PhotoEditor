@@ -86,21 +86,42 @@
     return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
   }
 
-  async function blobFromUrl(url) {
+  async function blobFromUrl(url, { retries = 4 } = {}) {
     if (!url) return null;
-    try {
-      const r = await fetch(url, { credentials: "same-origin" });
-      if (!r.ok) return null;
-      const blob = await r.blob();
-      // Reject empty / non-image payloads so we don't restore broken previews
-      if (!blob || !blob.size) return null;
-      if (blob.type && !blob.type.startsWith("image/") && !blob.type.includes("octet-stream")) {
-        // still allow octet-stream (job source responses)
+    // Local blob/data URLs don't need network retries
+    if (String(url).startsWith("blob:") || String(url).startsWith("data:")) {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        const blob = await r.blob();
+        return blob && blob.size ? blob : null;
+      } catch {
+        return null;
       }
-      return blob;
-    } catch {
-      return null;
     }
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch(url, { credentials: "same-origin" });
+        if (!r.ok) {
+          if (
+            attempt < retries &&
+            (r.status === 502 || r.status === 503 || r.status === 504)
+          ) {
+            await new Promise((res) => setTimeout(res, 700 * attempt));
+            continue;
+          }
+          return null;
+        }
+        const blob = await r.blob();
+        // Reject empty / non-image payloads so we don't restore broken previews
+        if (!blob || !blob.size) return null;
+        return blob;
+      } catch {
+        if (attempt >= retries) return null;
+        await new Promise((res) => setTimeout(res, 700 * attempt));
+      }
+    }
+    return null;
   }
 
   // ── Session ──────────────────────────────────────────────────────────
