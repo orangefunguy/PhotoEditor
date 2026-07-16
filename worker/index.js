@@ -13,6 +13,19 @@ const ORIGIN_ATTEMPTS = 4;
 const ORIGIN_RETRY_BASE_MS = 1200;
 const ORIGIN_ATTEMPT_TIMEOUT_MS = 18000;
 
+/** Paths that must ship from latest main even if Render deploy lags. */
+const EDGE_STATIC_PREFIXES = [
+  "/static/vendor/",
+  "/static/js/denoise-worker.js",
+  "/static/js/client-pipeline.js",
+  "/static/js/app.js",
+  "/static/js/tooltips.js",
+  "/static/index.html",
+];
+
+const GITHUB_RAW =
+  "https://raw.githubusercontent.com/orangefunguy/PhotoEditor/main";
+
 export default {
   async fetch(request, env) {
     const incoming = new URL(request.url);
@@ -20,6 +33,18 @@ export default {
     // Internal durable-auth API (Render → Worker → KV). Not for browsers.
     if (incoming.pathname.startsWith("/_internal/auth/")) {
       return handleAuthInternal(request, env, incoming);
+    }
+
+    // Serve quality denoise assets from GitHub main when Render is stale
+    if (shouldServeFromEdge(incoming.pathname)) {
+      const edge = await serveEdgeStatic(incoming.pathname, request);
+      if (edge) return edge;
+    }
+
+    // HTML entry: inject cache-bust for local pipeline if origin is old
+    if (incoming.pathname === "/" || incoming.pathname === "/index.html") {
+      const proxied = await proxyToOrigin(request, env, incoming);
+      return maybeRewriteIndexHtml(proxied);
     }
 
     return proxyToOrigin(request, env, incoming);
@@ -30,6 +55,81 @@ export default {
     ctx.waitUntil(warmOrigin(env));
   },
 };
+
+/** @param {string} pathname */
+function shouldServeFromEdge(pathname) {
+  const path = pathname.split("?")[0];
+  return EDGE_STATIC_PREFIXES.some(
+    (p) => path === p || path.startsWith(p) || path.startsWith(p.replace(/\.js$/, ""))
+  );
+}
+
+/**
+ * Fetch latest static file from GitHub main (bypasses stale Render free deploys).
+ * @param {string} pathname
+ * @param {Request} request
+ */
+async function serveEdgeStatic(pathname, request) {
+  const path = pathname.split("?")[0];
+  // normalize
+  let rel = path;
+  if (rel === "/static/index.html") rel = "/static/index.html";
+  const url = GITHUB_RAW + rel;
+  try {
+    const res = await fetch(url, {
+      cf: { cacheTtl: 60, cacheEverything: true },
+      headers: {
+        "User-Agent": "PhotoEditor-Edge/1.0",
+        // conditional revalidation
+        "Cache-Control": "no-cache",
+      },
+    });
+    if (!res.ok) return null;
+    const headers = new Headers(res.headers);
+    headers.set("Access-Control-Allow-Origin", "*");
+    headers.set("Cache-Control", "public, max-age=60, must-revalidate");
+    if (rel.endsWith(".wasm")) {
+      headers.set("Content-Type", "application/wasm");
+    } else if (rel.endsWith(".js")) {
+      headers.set("Content-Type", "application/javascript; charset=utf-8");
+    } else if (rel.endsWith(".html")) {
+      headers.set("Content-Type", "text/html; charset=utf-8");
+    }
+    // CORS for workers loading wasm from same origin is fine
+    return new Response(res.body, { status: 200, headers });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ensure editor HTML references the quality pipeline scripts.
+ * @param {Response} response
+ */
+async function maybeRewriteIndexHtml(response) {
+  if (!response || response.status !== 200) return response;
+  const ct = response.headers.get("Content-Type") || "";
+  if (!ct.includes("text/html")) return response;
+  let html = await response.text();
+  if (!html.includes("client-pipeline.js")) {
+    html = html.replace(
+      /(<script src="\/static\/js\/tooltips\.js[^"]*"><\/script>)/,
+      '$1\n    <script src="/static/js/client-pipeline.js?v=20260716d"></script>'
+    );
+  }
+  // Force latest asset versions
+  html = html.replace(
+    /(\/static\/js\/(?:app|client-pipeline|denoise-worker|tooltips|store|activity-log)\.js)\?v=[^"]+/g,
+    "$1?v=20260716d"
+  );
+  if (!html.includes("/static/js/app.js")) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", "no-store");
+  headers.delete("content-length");
+  return new Response(html, { status: response.status, headers });
+}
 
 /**
  * @param {{ API_ORIGIN?: string }} env
