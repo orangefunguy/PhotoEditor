@@ -22,6 +22,11 @@
         </div>
       </div>
       <div class="header-actions">
+        <div class="history-actions">
+          <button type="button" class="btn" id="btnUndo" title="Undo last change (⌘Z)" disabled>Undo</button>
+          <button type="button" class="btn" id="btnRedo" title="Redo (⌘⇧Z)" disabled>Redo</button>
+        </div>
+        <span class="badge" id="cacheBadge" title="Session cache status"><span class="dot"></span> cache</span>
         <span class="badge" id="healthBadge"><span class="dot"></span> offline</span>
         <a class="btn btn-ghost" href="https://github.com/orangefunguy/PhotoEditor" target="_blank" rel="noopener"
           >GitHub</a
@@ -207,12 +212,41 @@
             <button type="button" class="btn btn-ghost btn-block" id="btnReset">Reset controls</button>
           </div>
 
+          <p class="section-title">Session &amp; cache</p>
+          <p class="help-text">
+            Work is cached in this browser (IndexedDB) so reloads and brief disconnects restore your
+            image, controls, and undo history. The image repository also mirrors to the local server.
+          </p>
+          <div class="btn-row">
+            <button type="button" class="btn btn-block" id="btnSaveSession" title="Force-save session now">
+              Save now
+            </button>
+            <button type="button" class="btn btn-block" id="btnClearSession" title="Clear current session cache only">
+              Clear session
+            </button>
+          </div>
+          <div class="btn-row">
+            <button type="button" class="btn btn-block" id="btnClearHistory" title="Clear undo history for this project">
+              Clear history
+            </button>
+            <button type="button" class="btn btn-block" id="btnClearLibrary" title="Delete all repository images">
+              Clear library
+            </button>
+          </div>
+          <div class="btn-row" style="grid-template-columns: 1fr">
+            <button type="button" class="btn btn-ghost btn-block" id="btnClearAllCache" title="Wipe all local caches">
+              Clear all cache
+            </button>
+          </div>
+          <div class="file-meta" id="cacheMeta">Cache: —</div>
+
           <div class="status-bar" id="status"><span class="spinner"></span><span id="statusText">Ready</span></div>
 
           <p class="footer-note">
             Metrics match the PhotoEditor technical report: geometry, MAE/RMSE/PSNR, luminance &amp; RGB
             means, Laplacian HF energy, residual / local std noise proxies, and global SSIM-like scores.
-            Pipeline uses classical denoise — not generative re-synthesis.
+            Pipeline uses classical denoise — not generative re-synthesis. Session cache + undo history
+            survive page reloads.
           </p>
         </div>
       </aside>
@@ -271,10 +305,20 @@
         </div>
       </section>
 
-      <!-- Right: metrics -->
+      <!-- Right: metrics / history / library -->
       <aside class="panel metrics-panel">
         <div class="panel-header">
-          <h2>Technical metrics</h2>
+          <div class="side-tabs" id="sideTabs" role="tablist">
+            <button type="button" class="side-tab active" data-tab="metrics" role="tab" aria-selected="true">
+              Metrics
+            </button>
+            <button type="button" class="side-tab" data-tab="history" role="tab" aria-selected="false">
+              History
+            </button>
+            <button type="button" class="side-tab" data-tab="library" role="tab" aria-selected="false">
+              Library
+            </button>
+          </div>
           <span class="badge" id="jobBadge">no job</span>
         </div>
         <div class="panel-body metrics-scroll" id="metricsRoot">
@@ -283,9 +327,20 @@
             After denoise, comparison deltas (MAE, PSNR, SSIM, % HF reduction, etc.) appear here.
           </div>
         </div>
+        <div class="panel-body metrics-scroll tab-panel" id="historyRoot" hidden>
+          <div class="empty-metrics">
+            Edit history appears here. Each denoise step is saved so you can undo or re-open past states.
+          </div>
+        </div>
+        <div class="panel-body metrics-scroll tab-panel" id="libraryRoot" hidden>
+          <div class="empty-metrics">
+            Edited images are stored in the local repository with a brief change log.
+          </div>
+        </div>
       </aside>
     </main>
 
+    <script src="/static/js/store.js"></script>
     <script src="/static/js/app.js"></script>
   </body>
 </html>

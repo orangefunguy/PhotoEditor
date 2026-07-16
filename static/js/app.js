@@ -22,6 +22,16 @@
     fitOnLoad: true,
     naturalW: 0,
     naturalH: 0,
+    /** Persistence */
+    projectId: null,
+    libraryEntryId: null,
+    filename: null,
+    history: [], // undo steps (blobs + metadata)
+    historyIndex: -1,
+    sideTab: "metrics",
+    _objectUrls: [],
+    _restoring: false,
+    _sessionTimer: null,
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -34,8 +44,13 @@
     status: $("#status"),
     statusText: $("#statusText"),
     healthBadge: $("#healthBadge"),
+    cacheBadge: $("#cacheBadge"),
+    cacheMeta: $("#cacheMeta"),
     jobBadge: $("#jobBadge"),
     metricsRoot: $("#metricsRoot"),
+    historyRoot: $("#historyRoot"),
+    libraryRoot: $("#libraryRoot"),
+    sideTabs: $("#sideTabs"),
     previewImg: $("#previewImg"),
     placeholder: $("#placeholder"),
     singleView: $("#singleView"),
@@ -56,9 +71,18 @@
     btnAnalyze: $("#btnAnalyze"),
     btnDownload: $("#btnDownload"),
     btnReset: $("#btnReset"),
+    btnUndo: $("#btnUndo"),
+    btnRedo: $("#btnRedo"),
+    btnSaveSession: $("#btnSaveSession"),
+    btnClearSession: $("#btnClearSession"),
+    btnClearHistory: $("#btnClearHistory"),
+    btnClearLibrary: $("#btnClearLibrary"),
+    btnClearAllCache: $("#btnClearAllCache"),
     toggleAdvanced: $("#toggleAdvanced"),
     advanced: $("#advanced"),
   };
+
+  const Store = window.PEStore;
 
   // ── paired range + number controls ──────────────────────────────────
   const pairs = [
@@ -95,6 +119,627 @@
   function setStatus(text, mode = "") {
     els.status.className = `status-bar ${mode}`.trim();
     els.statusText.textContent = text;
+  }
+
+  function trackUrl(url) {
+    if (url && url.startsWith("blob:")) state._objectUrls.push(url);
+    return url;
+  }
+
+  function revokeTrackedUrls() {
+    state._objectUrls.forEach((u) => {
+      try {
+        URL.revokeObjectURL(u);
+      } catch {
+        /* ignore */
+      }
+    });
+    state._objectUrls = [];
+  }
+
+  function urlFromBlob(blob) {
+    if (!blob) return null;
+    return trackUrl(URL.createObjectURL(blob));
+  }
+
+  function setCacheBadge(ok, label) {
+    if (!els.cacheBadge) return;
+    els.cacheBadge.classList.toggle("cached", !!ok);
+    els.cacheBadge.innerHTML = `<span class="dot"></span> ${label || (ok ? "cached" : "cache")}`;
+  }
+
+  async function refreshCacheMeta() {
+    if (!els.cacheMeta || !Store) return;
+    try {
+      const est = await Store.estimateUsage();
+      const sess = await Store.loadSession();
+      const hist = await Store.loadHistoryState();
+      const lib = await Store.listLibrary();
+      const usage =
+        est.usage != null ? `${(est.usage / (1024 * 1024)).toFixed(1)} MB used` : "usage n/a";
+      const when = sess?.savedAt ? new Date(sess.savedAt).toLocaleString() : "none";
+      els.cacheMeta.textContent = `Cache: session ${when} · undo ${hist.steps?.length || 0} · library ${lib.length} · ${usage}`;
+      setCacheBadge(!!sess, sess ? "cached" : "cache");
+    } catch {
+      els.cacheMeta.textContent = "Cache: unavailable";
+    }
+  }
+
+  function applyControlsToForm(controls) {
+    if (!controls) return;
+    const setPair = (id, val, fmt) => {
+      const r = document.getElementById(id);
+      const n = document.getElementById(id + "Num");
+      const h = document.getElementById(id + "Val");
+      if (r) r.value = val;
+      if (n) n.value = val;
+      if (h && fmt) h.textContent = fmt(val);
+    };
+    if (controls.strength_pct != null) setPair("strength", controls.strength_pct, (v) => `${v}%`);
+    if (controls.laplacian_variance_reduce_pct != null)
+      setPair("lapVar", controls.laplacian_variance_reduce_pct, (v) => `${v}%`);
+    if (controls.residual_std_reduce_pct != null)
+      setPair("resStd", controls.residual_std_reduce_pct, (v) => `${v}%`);
+    if (controls.local_std_mean_reduce_pct != null)
+      setPair("locStd", controls.local_std_mean_reduce_pct, (v) => `${v}%`);
+    if (controls.luminance_offset != null) setPair("lumOff", controls.luminance_offset, String);
+    if (controls.r_offset != null) setPair("rOff", controls.r_offset, String);
+    if (controls.g_offset != null) setPair("gOff", controls.g_offset, String);
+    if (controls.b_offset != null) setPair("bOff", controls.b_offset, String);
+    if (controls.jpeg_quality != null) setPair("jpegQ", controls.jpeg_quality, String);
+    if (controls.scale != null) setPair("scale", controls.scale, (v) => `${Number(v).toFixed(2)}×`);
+    if (controls.algorithm) $("#algorithm").value = controls.algorithm;
+    if (controls.preserve_resolution != null) $("#preserveRes").checked = !!controls.preserve_resolution;
+    if (controls.nlm_h != null) $("#nlmH").value = controls.nlm_h;
+    if (controls.bilateral_sigma_color != null) $("#bilSigmaC").value = controls.bilateral_sigma_color;
+    if (controls.bilateral_sigma_space != null) $("#bilSigmaS").value = controls.bilateral_sigma_space;
+    if (controls.gaussian_sigma != null) $("#gaussSigma").value = controls.gaussian_sigma;
+  }
+
+  function briefReportSummary(report) {
+    if (!report) return null;
+    const pd = report.pixel_difference || {};
+    const hf = report.high_frequency_delta || {};
+    const nd = report.noise_proxy_delta || {};
+    const pipe = report.pipeline || {};
+    return {
+      algorithm: pipe.algorithm,
+      strength_pct: pipe.effective_strength_pct,
+      psnr_db: pd.psnr_db,
+      mae: pd.mae,
+      laplacian_var_pct: hf.laplacian_variance_pct_change,
+      residual_std_pct: nd.residual_std_pct_change,
+      resolution_preserved: (report.geometry_delta || {}).resolution_preserved,
+    };
+  }
+
+  function formatStepSummary(step) {
+    if (!step) return "";
+    if (step.summary) return step.summary;
+    const s = step.reportSummary;
+    if (!s) return step.label || "Step";
+    const bits = [];
+    if (s.psnr_db != null) bits.push(`PSNR ${fmtNum(s.psnr_db)} dB`);
+    if (s.laplacian_var_pct != null) bits.push(`HF ${fmtNum(s.laplacian_var_pct)}%`);
+    if (s.residual_std_pct != null) bits.push(`noise ${fmtNum(s.residual_std_pct)}%`);
+    return bits.join(" · ") || step.label;
+  }
+
+  function updateUndoRedoButtons() {
+    els.btnUndo.disabled = state.historyIndex <= 0;
+    els.btnRedo.disabled =
+      state.historyIndex < 0 || state.historyIndex >= state.history.length - 1;
+  }
+
+  // ── Persistence: session / history / library ────────────────────────
+  function scheduleSessionSave() {
+    if (state._restoring || !Store) return;
+    clearTimeout(state._sessionTimer);
+    state._sessionTimer = setTimeout(() => {
+      persistSession().catch(() => {});
+    }, 600);
+  }
+
+  async function persistSession() {
+    if (!Store || state._restoring) return;
+    const sourceBlob =
+      state.file ||
+      (await Store.blobFromUrl(state.sourceUrl)) ||
+      (state.history[state.historyIndex] && state.history[state.historyIndex].sourceBlob);
+    const outputBlob =
+      (await Store.blobFromUrl(state.outputUrl)) ||
+      (state.history[state.historyIndex] && state.history[state.historyIndex].outputBlob);
+
+    // Keep history steps' blobs; strip heavy report objects already summarized
+    const histLite = {
+      projectId: state.projectId,
+      index: state.historyIndex,
+      steps: state.history.map((s) => ({
+        id: s.id,
+        at: s.at,
+        label: s.label,
+        summary: s.summary,
+        controls: s.controls,
+        jobId: s.jobId,
+        view: s.view,
+        filename: s.filename,
+        sourceBlob: s.sourceBlob,
+        outputBlob: s.outputBlob || null,
+        sourceMetrics: s.sourceMetrics,
+        reportSummary: s.reportSummary,
+        report: s.report || null,
+      })),
+    };
+
+    await Store.saveHistoryState(histLite);
+    await Store.saveSession({
+      projectId: state.projectId,
+      libraryEntryId: state.libraryEntryId,
+      jobId: state.jobId,
+      filename: state.filename || state.file?.name || null,
+      view: state.view,
+      zoomPct: state.zoomPct,
+      controls: collectControls(),
+      sourceMetrics: state.sourceMetrics,
+      report: state.report,
+      historyIndex: state.historyIndex,
+      sourceBlob: sourceBlob || null,
+      outputBlob: outputBlob || null,
+      fileName: state.filename || state.file?.name || "image",
+      fileType: state.file?.type || sourceBlob?.type || "image/jpeg",
+    });
+    setCacheBadge(true, "cached");
+    refreshCacheMeta();
+  }
+
+  async function pushHistoryStep(step) {
+    // Drop redo tail
+    if (state.historyIndex < state.history.length - 1) {
+      state.history = state.history.slice(0, state.historyIndex + 1);
+    }
+    state.history.push(step);
+    if (state.history.length > Store.MAX_HISTORY) {
+      const drop = state.history.length - Store.MAX_HISTORY;
+      state.history = state.history.slice(drop);
+    }
+    state.historyIndex = state.history.length - 1;
+    updateUndoRedoButtons();
+    renderHistoryPanel();
+    await persistSession();
+  }
+
+  function applyHistoryStep(step, { fit = false } = {}) {
+    if (!step) return;
+    state._restoring = true;
+    revokeTrackedUrls();
+    state.jobId = step.jobId || state.jobId;
+    state.filename = step.filename || state.filename;
+    state.sourceMetrics = step.sourceMetrics || state.sourceMetrics;
+    state.report = step.report || null;
+    state.view = step.outputBlob ? step.view || "compare" : "source";
+    state.fitOnLoad = fit;
+    state.sourceUrl = urlFromBlob(step.sourceBlob) || state.sourceUrl;
+    state.outputUrl = step.outputBlob ? urlFromBlob(step.outputBlob) : null;
+    if (step.sourceBlob) {
+      state.file = new File(
+        [step.sourceBlob],
+        step.filename || state.filename || "image.jpg",
+        { type: step.sourceBlob.type || "image/jpeg" }
+      );
+    }
+    if (step.controls) applyControlsToForm(step.controls);
+    els.btnDenoise.disabled = !state.sourceUrl;
+    els.btnAnalyze.disabled = !state.file;
+    els.btnDownload.disabled = !state.outputUrl;
+    if (state.outputUrl) {
+      els.btnDownload.onclick = () => {
+        const a = document.createElement("a");
+        a.href = state.outputUrl;
+        a.download = `photoeditor_${state.jobId || "edit"}_denoised.jpg`;
+        a.click();
+      };
+    }
+    els.jobBadge.textContent = state.jobId || "cached";
+    els.fileMeta.textContent = state.filename
+      ? `${state.filename}${state.sourceMetrics?.geometry ? ` · ${state.sourceMetrics.geometry.width}×${state.sourceMetrics.geometry.height}` : ""}`
+      : "Restored session";
+    $$("#viewToggle button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.view === state.view)
+    );
+    refreshMetrics();
+    setPreview();
+    updateUndoRedoButtons();
+    renderHistoryPanel();
+    state._restoring = false;
+  }
+
+  async function undo() {
+    if (state.historyIndex <= 0) return;
+    state.historyIndex -= 1;
+    applyHistoryStep(state.history[state.historyIndex], { fit: false });
+    await persistSession();
+    setStatus(`Undo → ${state.history[state.historyIndex].label}`);
+  }
+
+  async function redo() {
+    if (state.historyIndex >= state.history.length - 1) return;
+    state.historyIndex += 1;
+    applyHistoryStep(state.history[state.historyIndex], { fit: false });
+    await persistSession();
+    setStatus(`Redo → ${state.history[state.historyIndex].label}`);
+  }
+
+  function renderHistoryPanel() {
+    if (!els.historyRoot) return;
+    if (!state.history.length) {
+      els.historyRoot.innerHTML =
+        '<div class="empty-metrics">No edit history yet. Upload an image and apply denoise to build an undo stack.</div>';
+      return;
+    }
+    const items = state.history
+      .map((step, i) => {
+        const active = i === state.historyIndex ? "active" : "";
+        const thumbSrc = step.outputBlob
+          ? URL.createObjectURL(step.outputBlob)
+          : step.sourceBlob
+            ? URL.createObjectURL(step.sourceBlob)
+            : "";
+        if (thumbSrc) trackUrl(thumbSrc);
+        const when = step.at ? new Date(step.at).toLocaleTimeString() : "";
+        return `<button type="button" class="history-item ${active}" data-hist-idx="${i}">
+          ${thumbSrc ? `<img class="thumb" src="${thumbSrc}" alt="" />` : `<div class="thumb"></div>`}
+          <div class="meta">
+            <strong>${step.label || "Step " + (i + 1)}</strong>
+            <span>${formatStepSummary(step)}</span>
+            <span>${when}</span>
+          </div>
+          <span class="idx">#${i + 1}</span>
+        </button>`;
+      })
+      .join("");
+    els.historyRoot.innerHTML = `<div class="history-list">${items}</div>
+      <p class="help-text" style="margin-top:0.75rem">Click a step to restore it. Undo/Redo also move through this list.</p>`;
+    els.historyRoot.querySelectorAll("[data-hist-idx]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const idx = Number(btn.getAttribute("data-hist-idx"));
+        state.historyIndex = idx;
+        applyHistoryStep(state.history[idx], { fit: false });
+        await persistSession();
+        setStatus(`Restored: ${state.history[idx].label}`);
+      });
+    });
+  }
+
+  async function syncLibraryToServer(entry) {
+    try {
+      const fd = new FormData();
+      if (entry.id) fd.append("entry_id", entry.id);
+      fd.append("filename", entry.filename || "image");
+      if (entry.jobId) fd.append("job_id", entry.jobId);
+      fd.append("controls_json", JSON.stringify(entry.controls || {}));
+      fd.append("history_json", JSON.stringify(entry.changelog || []));
+      fd.append("report_summary_json", JSON.stringify(entry.reportSummary || null));
+      if (entry.sourceBlob) {
+        fd.append("source", entry.sourceBlob, entry.filename || "source.jpg");
+      }
+      if (entry.outputBlob) {
+        fd.append("output", entry.outputBlob, "output.jpg");
+      }
+      const r = await fetch("/api/library", { method: "POST", body: fd });
+      if (!r.ok) return null;
+      const data = await r.json();
+      return data.entry;
+    } catch {
+      return null;
+    }
+  }
+
+  async function saveToLibrary() {
+    if (!Store) return;
+    const step = state.history[state.historyIndex];
+    const sourceBlob =
+      step?.sourceBlob ||
+      state.file ||
+      (await Store.blobFromUrl(state.sourceUrl));
+    const outputBlob =
+      step?.outputBlob || (await Store.blobFromUrl(state.outputUrl));
+    if (!sourceBlob && !outputBlob) return;
+
+    const changelog = state.history.map((s) => ({
+      id: s.id,
+      at: s.at,
+      label: s.label,
+      summary: s.summary || formatStepSummary(s),
+      controls: s.controls,
+    }));
+
+    const id = state.libraryEntryId || Store.uid();
+    const entry = {
+      id,
+      filename: state.filename || state.file?.name || "image",
+      jobId: state.jobId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      controls: collectControls(),
+      reportSummary: briefReportSummary(state.report),
+      changelog,
+      sourceBlob: sourceBlob || null,
+      outputBlob: outputBlob || null,
+      thumbBlob: outputBlob || sourceBlob || null,
+    };
+    // preserve createdAt if existing
+    const prev = await Store.getLibraryEntry(id);
+    if (prev?.createdAt) entry.createdAt = prev.createdAt;
+
+    await Store.putLibraryEntry(entry);
+    state.libraryEntryId = id;
+    const serverEntry = await syncLibraryToServer(entry);
+    if (serverEntry?.id) state.libraryEntryId = serverEntry.id;
+    renderLibraryPanel();
+    refreshCacheMeta();
+  }
+
+  async function renderLibraryPanel() {
+    if (!els.libraryRoot || !Store) return;
+    let local = [];
+    try {
+      local = await Store.listLibrary();
+    } catch {
+      local = [];
+    }
+    let server = [];
+    try {
+      const r = await fetch("/api/library");
+      if (r.ok) {
+        const data = await r.json();
+        server = data.entries || [];
+      }
+    } catch {
+      /* offline */
+    }
+
+    // Merge by id (prefer local blobs)
+    const map = new Map();
+    server.forEach((e) => map.set(e.id, { ...e, _server: true }));
+    local.forEach((e) => {
+      const prev = map.get(e.id) || {};
+      map.set(e.id, { ...prev, ...e, _local: true });
+    });
+    const entries = [...map.values()].sort(
+      (a, b) => (b.updatedAt || b.updated_at || 0) - (a.updatedAt || a.updated_at || 0)
+    );
+
+    if (!entries.length) {
+      els.libraryRoot.innerHTML =
+        '<div class="empty-metrics">No images in the repository yet. Denoise an image and it will be saved here with a change log.</div>';
+      return;
+    }
+
+    const html = entries
+      .map((e) => {
+        const name = e.filename || "image";
+        const when = new Date(e.updatedAt || e.updated_at || Date.now()).toLocaleString();
+        const log = (e.changelog || e.history || []).slice(-4).reverse();
+        const thumb = e.thumbBlob || e.outputBlob || e.sourceBlob;
+        const thumbUrl = thumb ? trackUrl(URL.createObjectURL(thumb)) : e._server
+          ? `/api/library/${e.id}/output?t=${e.updated_at || e.updatedAt || 0}`
+          : "";
+        const summary = e.reportSummary || e.report_summary || {};
+        const sumLine = [
+          summary.psnr_db != null ? `PSNR ${fmtNum(summary.psnr_db)}` : null,
+          summary.algorithm || null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        const logHtml = log.length
+          ? `<ul class="changelog">${log
+              .map(
+                (c) =>
+                  `<li>${c.label || "edit"}${c.summary ? " — " + c.summary : ""}</li>`
+              )
+              .join("")}</ul>`
+          : "";
+        return `<div class="library-item" data-lib-id="${e.id}">
+          ${thumbUrl ? `<img class="thumb" src="${thumbUrl}" alt="" />` : `<div class="thumb"></div>`}
+          <div class="meta">
+            <strong>${name}</strong>
+            <span>${when}${sumLine ? " · " + sumLine : ""}</span>
+            ${logHtml}
+            <div class="actions">
+              <button type="button" class="btn" data-lib-open="${e.id}">Open</button>
+              <button type="button" class="btn" data-lib-del="${e.id}">Delete</button>
+            </div>
+          </div>
+        </div>`;
+      })
+      .join("");
+
+    els.libraryRoot.innerHTML = `<div class="library-list">${html}</div>`;
+    els.libraryRoot.querySelectorAll("[data-lib-open]").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openLibraryEntry(btn.getAttribute("data-lib-open"));
+      });
+    });
+    els.libraryRoot.querySelectorAll("[data-lib-del]").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const id = btn.getAttribute("data-lib-del");
+        if (!confirm("Delete this image from the repository?")) return;
+        await Store.deleteLibraryEntry(id);
+        try {
+          await fetch(`/api/library/${id}`, { method: "DELETE" });
+        } catch {
+          /* offline */
+        }
+        if (state.libraryEntryId === id) state.libraryEntryId = null;
+        renderLibraryPanel();
+        refreshCacheMeta();
+        setStatus("Removed from library");
+      });
+    });
+  }
+
+  async function openLibraryEntry(id) {
+    setStatus("Opening library entry…", "busy");
+    let entry = await Store.getLibraryEntry(id);
+    if (!entry || (!entry.sourceBlob && !entry.outputBlob)) {
+      // fetch from server
+      try {
+        const metaR = await fetch(`/api/library/${id}`);
+        if (!metaR.ok) throw new Error("Not found");
+        const meta = await metaR.json();
+        let sourceBlob = null;
+        let outputBlob = null;
+        try {
+          const s = await fetch(`/api/library/${id}/source`);
+          if (s.ok) sourceBlob = await s.blob();
+        } catch {
+          /* */
+        }
+        try {
+          const o = await fetch(`/api/library/${id}/output`);
+          if (o.ok) outputBlob = await o.blob();
+        } catch {
+          /* */
+        }
+        entry = {
+          id,
+          filename: meta.filename,
+          jobId: meta.job_id || meta.jobId,
+          controls: meta.controls,
+          reportSummary: meta.report_summary || meta.reportSummary,
+          changelog: meta.history || meta.changelog || [],
+          sourceBlob,
+          outputBlob,
+          thumbBlob: outputBlob || sourceBlob,
+        };
+        if (sourceBlob || outputBlob) await Store.putLibraryEntry({ ...entry, updatedAt: Date.now(), createdAt: Date.now() });
+      } catch (e) {
+        setStatus(e.message || "Could not open entry", "error");
+        return;
+      }
+    }
+
+    state.projectId = Store.uid();
+    state.libraryEntryId = id;
+    state.jobId = entry.jobId || null;
+    state.filename = entry.filename;
+    state.history = [];
+    state.historyIndex = -1;
+
+    if (entry.sourceBlob) {
+      const orig = {
+        id: Store.uid(),
+        at: Date.now(),
+        label: "Original (from library)",
+        summary: entry.filename || "source",
+        controls: entry.controls || collectControls(),
+        jobId: state.jobId,
+        view: "source",
+        filename: entry.filename,
+        sourceBlob: entry.sourceBlob,
+        outputBlob: null,
+        sourceMetrics: null,
+        reportSummary: null,
+        report: null,
+      };
+      state.history.push(orig);
+      if (entry.outputBlob) {
+        state.history.push({
+          id: Store.uid(),
+          at: Date.now(),
+          label: "Library output",
+          summary: formatStepSummary({ reportSummary: entry.reportSummary }),
+          controls: entry.controls || collectControls(),
+          jobId: state.jobId,
+          view: "compare",
+          filename: entry.filename,
+          sourceBlob: entry.sourceBlob,
+          outputBlob: entry.outputBlob,
+          sourceMetrics: null,
+          reportSummary: entry.reportSummary || null,
+          report: null,
+        });
+      }
+      // Expand changelog as metadata-only steps if longer
+      state.historyIndex = state.history.length - 1;
+      applyHistoryStep(state.history[state.historyIndex], { fit: true });
+    }
+    await persistSession();
+    setSideTab("history");
+    setStatus(`Opened “${entry.filename || id}” from library`);
+  }
+
+  function setSideTab(name) {
+    state.sideTab = name;
+    $$(".side-tab").forEach((t) => {
+      const on = t.dataset.tab === name;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    els.metricsRoot.hidden = name !== "metrics";
+    els.historyRoot.hidden = name !== "history";
+    els.libraryRoot.hidden = name !== "library";
+    if (name === "history") renderHistoryPanel();
+    if (name === "library") renderLibraryPanel();
+  }
+
+  async function restoreSessionOnLoad() {
+    if (!Store) return;
+    try {
+      const sess = await Store.loadSession();
+      const hist = await Store.loadHistoryState();
+      if (!sess && !(hist.steps && hist.steps.length)) {
+        refreshCacheMeta();
+        return;
+      }
+      state._restoring = true;
+      if (hist.steps && hist.steps.length) {
+        state.history = hist.steps;
+        state.historyIndex = Math.min(
+          Math.max(0, hist.index ?? hist.steps.length - 1),
+          hist.steps.length - 1
+        );
+        state.projectId = hist.projectId || sess?.projectId || Store.uid();
+        applyHistoryStep(state.history[state.historyIndex], { fit: true });
+      } else if (sess?.sourceBlob) {
+        state.projectId = sess.projectId || Store.uid();
+        state.libraryEntryId = sess.libraryEntryId || null;
+        state.jobId = sess.jobId;
+        state.filename = sess.filename || sess.fileName;
+        state.sourceMetrics = sess.sourceMetrics;
+        state.report = sess.report;
+        state.view = sess.view || "source";
+        state.zoomPct = sess.zoomPct || 100;
+        if (sess.controls) applyControlsToForm(sess.controls);
+        state.sourceUrl = urlFromBlob(sess.sourceBlob);
+        state.outputUrl = sess.outputBlob ? urlFromBlob(sess.outputBlob) : null;
+        state.file = new File([sess.sourceBlob], state.filename || "image.jpg", {
+          type: sess.fileType || sess.sourceBlob.type || "image/jpeg",
+        });
+        els.btnDenoise.disabled = false;
+        els.btnAnalyze.disabled = false;
+        els.btnDownload.disabled = !state.outputUrl;
+        els.jobBadge.textContent = state.jobId || "cached";
+        els.fileMeta.textContent = `${state.filename || "Restored"} (from cache)`;
+        $$("#viewToggle button").forEach((b) =>
+          b.classList.toggle("active", b.dataset.view === state.view)
+        );
+        refreshMetrics();
+        setPreview();
+      }
+      state._restoring = false;
+      setCacheBadge(true, "restored");
+      setStatus("Restored previous session from cache");
+      updateUndoRedoButtons();
+      renderHistoryPanel();
+      refreshCacheMeta();
+    } catch (e) {
+      state._restoring = false;
+      console.warn("Session restore failed", e);
+      refreshCacheMeta();
+    }
   }
 
   function fmtNum(n, digits = 2) {
@@ -588,13 +1233,19 @@
       throw new Error(err.detail || r.statusText);
     }
     const data = await r.json();
+    revokeTrackedUrls();
+    state.projectId = Store ? Store.uid() : String(Date.now());
+    state.libraryEntryId = null;
     state.jobId = data.job_id;
+    state.filename = file.name;
     state.sourceMetrics = data.metrics;
     state.report = null;
     state.sourceUrl = data.preview_url + `?t=${Date.now()}`;
     state.outputUrl = null;
     state.view = "source";
     state.fitOnLoad = true;
+    state.history = [];
+    state.historyIndex = -1;
     $$("#viewToggle button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === "source")
     );
@@ -608,17 +1259,37 @@
     )}`;
     refreshMetrics();
     setPreview();
-    setStatus("Analysis complete");
+
+    // Seed undo history with original
+    const sourceBlob = file;
+    await pushHistoryStep({
+      id: Store ? Store.uid() : String(Date.now()),
+      at: Date.now(),
+      label: "Original upload",
+      summary: `${g.width}×${g.height} · ${fmtBytes(g.file_bytes)}`,
+      controls: collectControls(),
+      jobId: data.job_id,
+      view: "source",
+      filename: file.name,
+      sourceBlob,
+      outputBlob: null,
+      sourceMetrics: data.metrics,
+      reportSummary: null,
+      report: null,
+    });
+    await saveToLibrary();
+    setStatus("Analysis complete · session cached");
   }
 
   async function runDenoise() {
     if (!state.file && !state.jobId) return;
     setStatus("Denoising… this may take a few seconds for large images", "busy");
     els.btnDenoise.disabled = true;
+    const controls = collectControls();
     const fd = new FormData();
     if (state.jobId) fd.append("job_id", state.jobId);
     if (state.file) fd.append("file", state.file);
-    fd.append("controls_json", JSON.stringify(collectControls()));
+    fd.append("controls_json", JSON.stringify(controls));
     try {
       const r = await fetch("/api/denoise", { method: "POST", body: fd });
       if (!r.ok) {
@@ -641,11 +1312,36 @@
       };
       refreshMetrics();
       setPreview();
+
       const psnr = data.report?.pixel_difference?.psnr_db;
       const hf = data.report?.high_frequency_delta?.laplacian_variance_pct_change;
-      setStatus(
-        `Done · PSNR ${fmtNum(psnr)} dB · Laplacian var ${fmtNum(hf)}%`
-      );
+      const algo = controls.algorithm || "hybrid";
+      const strength = controls.strength_pct;
+      const summary = `PSNR ${fmtNum(psnr)} dB · HF ${fmtNum(hf)}% · ${algo} ${strength}%`;
+
+      // Capture blobs for undo / repository
+      let sourceBlob = state.file;
+      if (!sourceBlob && Store) sourceBlob = await Store.blobFromUrl(state.sourceUrl);
+      let outputBlob = null;
+      if (Store) outputBlob = await Store.blobFromUrl(state.outputUrl);
+
+      await pushHistoryStep({
+        id: Store ? Store.uid() : String(Date.now()),
+        at: Date.now(),
+        label: `Denoise · ${algo} · ${strength}%`,
+        summary,
+        controls,
+        jobId: data.job_id,
+        view: "compare",
+        filename: state.filename || state.file?.name,
+        sourceBlob: sourceBlob || null,
+        outputBlob: outputBlob || null,
+        sourceMetrics: state.sourceMetrics || data.report?.source,
+        reportSummary: briefReportSummary(data.report),
+        report: data.report,
+      });
+      await saveToLibrary();
+      setStatus(`Done · ${summary} · saved to history & library`);
     } catch (e) {
       setStatus(e.message || String(e), "error");
     } finally {
@@ -883,9 +1579,138 @@
     });
   })();
 
+  // Side tabs: Metrics / History / Library
+  if (els.sideTabs) {
+    els.sideTabs.querySelectorAll(".side-tab").forEach((tab) => {
+      tab.addEventListener("click", () => setSideTab(tab.dataset.tab));
+    });
+  }
+
+  // Undo / Redo
+  els.btnUndo.addEventListener("click", () => undo());
+  els.btnRedo.addEventListener("click", () => redo());
+  window.addEventListener("keydown", (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+    const key = e.key.toLowerCase();
+    if (key === "z" && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+    } else if (key === "z" && e.shiftKey) {
+      e.preventDefault();
+      redo();
+    } else if (key === "y") {
+      e.preventDefault();
+      redo();
+    }
+  });
+
+  // Cache controls
+  els.btnSaveSession.addEventListener("click", async () => {
+    try {
+      await persistSession();
+      await saveToLibrary();
+      setStatus("Session & library saved");
+    } catch (e) {
+      setStatus(e.message || "Save failed", "error");
+    }
+  });
+
+  els.btnClearSession.addEventListener("click", async () => {
+    if (!confirm("Clear the current session cache? The open image stays until you reload.")) return;
+    if (Store) await Store.clearSession();
+    setCacheBadge(false, "cache");
+    refreshCacheMeta();
+    setStatus("Session cache cleared");
+  });
+
+  els.btnClearHistory.addEventListener("click", async () => {
+    if (!confirm("Clear undo history for this project?")) return;
+    state.history = [];
+    state.historyIndex = -1;
+    if (Store) await Store.clearHistoryState();
+    updateUndoRedoButtons();
+    renderHistoryPanel();
+    await persistSession();
+    setStatus("Edit history cleared");
+  });
+
+  els.btnClearLibrary.addEventListener("click", async () => {
+    if (!confirm("Delete ALL images from the local repository (browser + server)?")) return;
+    if (Store) await Store.clearLibrary();
+    try {
+      await fetch("/api/library", { method: "DELETE" });
+    } catch {
+      /* offline */
+    }
+    state.libraryEntryId = null;
+    renderLibraryPanel();
+    refreshCacheMeta();
+    setStatus("Image library cleared");
+  });
+
+  els.btnClearAllCache.addEventListener("click", async () => {
+    if (
+      !confirm(
+        "Clear ALL cache: session, undo history, and image repository? This cannot be undone."
+      )
+    ) {
+      return;
+    }
+    if (Store) await Store.clearAll();
+    try {
+      await fetch("/api/library", { method: "DELETE" });
+    } catch {
+      /* offline */
+    }
+    revokeTrackedUrls();
+    state.file = null;
+    state.jobId = null;
+    state.sourceUrl = null;
+    state.outputUrl = null;
+    state.sourceMetrics = null;
+    state.report = null;
+    state.history = [];
+    state.historyIndex = -1;
+    state.projectId = null;
+    state.libraryEntryId = null;
+    state.filename = null;
+    els.btnDenoise.disabled = true;
+    els.btnAnalyze.disabled = true;
+    els.btnDownload.disabled = true;
+    els.jobBadge.textContent = "no job";
+    els.fileMeta.textContent = "No image loaded";
+    refreshMetrics();
+    setPreview();
+    updateUndoRedoButtons();
+    renderHistoryPanel();
+    renderLibraryPanel();
+    setCacheBadge(false, "cache");
+    refreshCacheMeta();
+    setStatus("All caches cleared — ready for a new image");
+  });
+
+  // Persist zoom changes
+  ["zoomIn", "zoomOut", "zoomFit", "zoom100"].forEach((id) => {
+    const el = els[id];
+    if (el) el.addEventListener("click", () => scheduleSessionSave());
+  });
+  els.zoomPctInput.addEventListener("change", () => scheduleSessionSave());
+
   // Initial zoom UI
   updateZoomUi();
+  updateUndoRedoButtons();
 
   checkHealth();
   setInterval(checkHealth, 15000);
+  restoreSessionOnLoad();
+  // Persist before unload
+  window.addEventListener("beforeunload", () => {
+    // best-effort sync write is not available for IDB; fire-and-forget
+    persistSession().catch(() => {});
+  });
+  // Periodic autosave
+  setInterval(() => {
+    if (state.sourceUrl || state.history.length) persistSession().catch(() => {});
+  }, 30000);
 })();

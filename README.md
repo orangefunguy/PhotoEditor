@@ -26,6 +26,10 @@ Repository: [github.com/orangefunguy/PhotoEditor](https://github.com/orangefungu
 | **Advanced** | JPEG quality, optional scale, NLM `h`, bilateral σ, Gaussian σ |
 | **Preview** | Source / output / interactive before–after slider |
 | **Zoom** | Preview zoom with **size %** (native pixels), Fit, 1:1, scroll-wheel zoom, drag pan |
+| **Session cache** | Auto-saves work to browser IndexedDB (survives reload / brief offline) |
+| **Undo history** | Per-project edit stack with Undo/Redo and clickable history timeline |
+| **Image library** | Repository of edited images + change log (browser + local server disk) |
+| **Clear cache** | Clear session, history, library, or everything for a fresh start |
 | **Export** | Download denoised JPEG |
 
 ---
@@ -143,6 +147,43 @@ The toolbar also shows `nativeW×nativeH px → displayW×displayH px · fit|1:1
 
 - **Reset controls** restores default sliders without clearing the image.
 
+### 7. Session cache, history & library
+
+PhotoEditor keeps your work so reloads and short disconnects do not lose progress.
+
+| Storage | Where | What |
+|---------|--------|------|
+| **Session** | Browser IndexedDB | Current image, controls, zoom, last report |
+| **History** | Browser IndexedDB | Undo stack (source/output blobs + labels) |
+| **Library** | Browser IndexedDB **+** `library/` on the server | Repository of edited images and change logs |
+
+**Automatic behavior**
+
+- On upload / denoise → session save + history step + library update  
+- Every ~30s and on tab close → session autosave  
+- On page load → previous session is restored when present  
+
+**Header**
+
+- **Undo** / **Redo** (also `⌘Z` / `⌘⇧Z` or `Ctrl+Z` / `Ctrl+Y`)  
+- Cache badge shows `cached` / `restored`
+
+**Side panel tabs**
+
+- **Metrics** — technical report  
+- **History** — click any step to restore that state  
+- **Library** — open or delete past edited images; shows a brief change log  
+
+**Cache controls** (left panel)
+
+| Button | Effect |
+|--------|--------|
+| **Save now** | Force-write session + library |
+| **Clear session** | Drop WIP session cache only |
+| **Clear history** | Empty undo stack for this project |
+| **Clear library** | Delete all repository entries (browser + server) |
+| **Clear all cache** | Wipe session, history, and library — start fresh |
+
 ---
 
 ## API (for maintainers / automation)
@@ -156,6 +197,13 @@ The toolbar also shows `nativeW×nativeH px → displayW×displayH px · fit|1:1
 | `GET` | `/api/jobs/{id}/source` | Original upload |
 | `GET` | `/api/jobs/{id}/output` | Denoised JPEG |
 | `GET` | `/api/jobs/{id}/download` | Attachment download |
+| `GET` | `/api/library` | List repository entries |
+| `GET` | `/api/library/{id}` | Entry metadata + history |
+| `POST` | `/api/library` | Save entry (`source`/`output` files + history JSON) |
+| `DELETE` | `/api/library/{id}` | Delete one entry |
+| `DELETE` | `/api/library` | Clear entire server library |
+| `GET` | `/api/library/{id}/source` | Source image bytes |
+| `GET` | `/api/library/{id}/output` | Output image bytes |
 
 Example `controls_json`:
 
@@ -190,13 +238,17 @@ PhotoEditor/
 ├── backend/
 │   ├── app.py          # FastAPI routes
 │   ├── analysis.py     # Metrics (MAE, PSNR, Laplacian, residual std, …)
-│   └── denoise.py      # Controllable classical denoise pipeline
+│   ├── denoise.py      # Controllable classical denoise pipeline
+│   └── library.py      # Server image repository + change logs
 ├── static/
 │   ├── index.html
 │   ├── css/styles.css
-│   └── js/app.js
+│   └── js/
+│       ├── store.js    # IndexedDB session / history / library
+│       └── app.js
 ├── uploads/            # runtime (gitignored)
-└── outputs/            # runtime (gitignored)
+├── outputs/            # runtime (gitignored)
+└── library/            # runtime repository (gitignored)
 ```
 
 ---

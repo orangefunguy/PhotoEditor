@@ -14,6 +14,7 @@ build/
 # App runtime
 uploads/
 outputs/
+library/
 tmp/
 *.log
 

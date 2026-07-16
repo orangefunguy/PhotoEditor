@@ -6,6 +6,7 @@ Endpoints:
   POST /api/denoise   → apply controllable denoise + return metrics + image
   GET  /api/health    → health check
   GET  /api/jobs/{id} → fetch stored job result metadata
+  GET/POST/DELETE /api/library  → image repository + change history
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from . import library as libstore
 from .analysis import analyze_single, load_rgb
 from .denoise import DenoiseControls, denoise_image
 
@@ -34,7 +36,7 @@ OUTPUTS.mkdir(exist_ok=True)
 app = FastAPI(
     title="PhotoEditor",
     description="Technical image analysis and controllable denoise for the web",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 # In-memory job index (also persisted as JSON next to outputs)
@@ -50,9 +52,140 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "app": "PhotoEditor",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "time": time.time(),
     }
+
+
+def _report_summary(report: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not report:
+        return None
+    pd = report.get("pixel_difference") or {}
+    hf = report.get("high_frequency_delta") or {}
+    nd = report.get("noise_proxy_delta") or {}
+    pipe = report.get("pipeline") or {}
+    return {
+        "algorithm": pipe.get("algorithm"),
+        "strength_pct": pipe.get("effective_strength_pct"),
+        "psnr_db": pd.get("psnr_db"),
+        "mae": pd.get("mae"),
+        "laplacian_var_pct": hf.get("laplacian_variance_pct_change"),
+        "residual_std_pct": nd.get("residual_std_pct_change"),
+        "resolution_preserved": (report.get("geometry_delta") or {}).get(
+            "resolution_preserved"
+        ),
+    }
+
+
+@app.get("/api/library")
+def library_list() -> JSONResponse:
+    return JSONResponse({"entries": libstore.list_entries()})
+
+
+@app.get("/api/library/{entry_id}")
+def library_get(entry_id: str) -> JSONResponse:
+    entry = libstore.get_entry(entry_id)
+    if not entry:
+        raise HTTPException(404, "Library entry not found.")
+    return JSONResponse(
+        {
+            **entry,
+            "source_url": f"/api/library/{entry_id}/source",
+            "output_url": f"/api/library/{entry_id}/output",
+        }
+    )
+
+
+@app.post("/api/library")
+async def library_save(
+    entry_id: str | None = Form(None),
+    filename: str | None = Form(None),
+    job_id: str | None = Form(None),
+    controls_json: str = Form("{}"),
+    history_json: str = Form("[]"),
+    report_summary_json: str = Form("null"),
+    source: UploadFile | None = File(None),
+    output: UploadFile | None = File(None),
+) -> JSONResponse:
+    try:
+        controls = json.loads(controls_json or "{}")
+        history = json.loads(history_json or "[]")
+        report_summary = json.loads(report_summary_json or "null")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, f"Invalid JSON: {exc}") from exc
+
+    source_bytes = await source.read() if source is not None else None
+    output_bytes = await output.read() if output is not None else None
+    source_ext = ".jpg"
+    if source is not None and source.filename:
+        source_ext = Path(source.filename).suffix or ".jpg"
+
+    # Prefer job artifacts when available
+    if job_id:
+        job = _jobs.get(job_id)
+        if job and not source_bytes and job.get("source_path"):
+            p = Path(job["source_path"])
+            if p.exists():
+                source_bytes = p.read_bytes()
+                source_ext = p.suffix or source_ext
+        if job and not output_bytes and job.get("output_path"):
+            p = Path(job["output_path"])
+            if p.exists():
+                output_bytes = p.read_bytes()
+        if not output_bytes:
+            p = OUTPUTS / f"{job_id}_denoised.jpg"
+            if p.exists():
+                output_bytes = p.read_bytes()
+        if report_summary is None and job and job.get("report"):
+            report_summary = _report_summary(job["report"])
+
+    entry = libstore.save_entry(
+        entry_id=entry_id,
+        filename=filename,
+        job_id=job_id,
+        controls=controls if isinstance(controls, dict) else {},
+        report_summary=report_summary if isinstance(report_summary, dict) else None,
+        history=history if isinstance(history, list) else [],
+        source_bytes=source_bytes,
+        output_bytes=output_bytes,
+        source_ext=source_ext,
+    )
+    eid = entry["id"]
+    return JSONResponse(
+        {
+            "entry": entry,
+            "source_url": f"/api/library/{eid}/source",
+            "output_url": f"/api/library/{eid}/output",
+        }
+    )
+
+
+@app.delete("/api/library/{entry_id}")
+def library_delete(entry_id: str) -> JSONResponse:
+    libstore.delete_entry(entry_id)
+    return JSONResponse({"ok": True, "id": entry_id})
+
+
+@app.delete("/api/library")
+def library_clear() -> JSONResponse:
+    n = libstore.clear_all()
+    return JSONResponse({"ok": True, "removed": n})
+
+
+@app.get("/api/library/{entry_id}/source")
+def library_source(entry_id: str) -> Response:
+    path = libstore.resolve_image(entry_id, "source")
+    if not path:
+        raise HTTPException(404, "Source not found in library.")
+    return FileResponse(path, filename=path.name)
+
+
+@app.get("/api/library/{entry_id}/output")
+def library_output(entry_id: str) -> Response:
+    path = libstore.resolve_image(entry_id, "output")
+    if not path:
+        raise HTTPException(404, "Output not found in library.")
+    return FileResponse(path, media_type="image/jpeg", filename=path.name)
 
 
 @app.post("/api/analyze")
