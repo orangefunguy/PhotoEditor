@@ -23,6 +23,10 @@
   --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --mono: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
   --header-h: 64px;
+  --controls-w: 340px;
+  --metrics-w: 380px;
+  --metrics-w-min: 280px;
+  --metrics-w-max: 720px;
 }
 
 *,
@@ -303,17 +307,23 @@ select {
 /* Layout */
 .app-shell {
   display: grid;
-  grid-template-columns: 340px 1fr 360px;
+  grid-template-columns: var(--controls-w) minmax(0, 1fr) var(--metrics-w);
   gap: 1rem;
   padding: 1rem;
   min-height: calc(100vh - var(--header-h));
-  max-width: 1680px;
+  max-width: none;
   margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 @media (max-width: 1200px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .metrics-panel .panel-resize-handle {
+    display: none;
   }
 }
 
@@ -326,6 +336,91 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.metrics-panel {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden; /* keep rounded chrome */
+}
+
+.metrics-panel > .panel-header,
+.metrics-panel > .panel-body {
+  min-width: 0;
+}
+
+/* Drag handle on the left edge of the metrics column */
+.panel-resize-handle {
+  position: absolute;
+  left: -6px;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  cursor: col-resize;
+  z-index: 20;
+  touch-action: none;
+}
+
+.panel-resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 48px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.12s, height 0.12s, box-shadow 0.12s;
+}
+
+.panel-resize-handle:hover::after,
+.panel-resize-handle:focus-visible::after,
+body.is-resizing-metrics .panel-resize-handle::after {
+  background: var(--accent);
+  height: 72px;
+  box-shadow: 0 0 10px rgba(110, 168, 254, 0.45);
+}
+
+body.is-resizing-metrics {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.is-resizing-metrics iframe,
+body.is-resizing-metrics img {
+  pointer-events: none;
+}
+
+.panel-width-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.panel-width-controls .btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.panel-width-label {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  min-width: 2.5rem;
+  text-align: center;
+}
+
+.metrics-panel .panel-header {
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  row-gap: 0.45rem;
 }
 
 .panel-header {
@@ -806,13 +901,31 @@ select:focus {
   gap: 0.75rem;
   max-height: calc(100vh - var(--header-h) - 2.5rem);
   overflow: auto;
+  overflow-x: auto;
+  min-width: 0;
 }
 
 .metric-card {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
-  overflow: hidden;
+  overflow: visible;
+  min-width: 0;
+  resize: both;
+  max-width: 100%;
+  min-height: 0;
+  /* visible resize corner for long content cards */
+}
+
+.metric-card:not(.is-resizable-card) {
+  resize: none;
+}
+
+.metric-card.is-resizable-card {
+  min-height: 4.5rem;
+  max-height: 50vh;
+  overflow: auto;
+  resize: vertical;
 }
 
 .metric-card h3 {
@@ -824,27 +937,121 @@ select:focus {
   color: var(--text-muted);
   border-bottom: 1px solid var(--border-soft);
   background: rgba(255, 255, 255, 0.02);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.metric-card h3 .card-title-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.metric-card h3 .card-expand-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border-radius: 6px;
+  font-size: 0.65rem;
+  font-family: var(--mono);
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.metric-card h3 .card-expand-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.metric-card.is-expanded {
+  resize: both;
+  overflow: auto;
+  min-width: 100%;
+  width: 100%;
+  max-width: none;
+  max-height: 70vh;
+  min-height: 8rem;
 }
 
 .metric-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
   font-family: var(--mono);
   font-size: 0.72rem;
 }
 
 .metric-table th,
 .metric-table td {
-  padding: 0.4rem 0.65rem;
+  padding: 0.45rem 0.65rem;
   text-align: left;
   border-bottom: 1px solid var(--border-soft);
   vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+  hyphens: auto;
 }
 
 .metric-table th {
   color: var(--text-dim);
   font-weight: 500;
-  width: 48%;
+  width: 36%;
+  max-width: 11rem;
+  min-width: 5.5rem;
+}
+
+.metric-table td {
+  width: auto;
+  color: var(--text);
+}
+
+.metric-table td .metric-value-text {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+/* Long pipeline / method strings: start collapsed to 3 lines, expand in-card */
+.metric-table td .metric-value-text.is-long {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.metric-table td .metric-value-text.is-long.is-open {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
+
+.metric-table .value-toggle {
+  display: inline-block;
+  margin-top: 0.25rem;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.metric-table .value-toggle:hover {
+  text-decoration: underline;
 }
 
 .metric-table tr:last-child td,
@@ -868,6 +1075,35 @@ select:focus {
   color: var(--text-dim);
   font-size: 0.85rem;
   padding: 1rem 0.25rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Stack label above value when panel is narrow */
+@media (max-width: 1400px) {
+  .metrics-panel.is-narrow .metric-table,
+  .metrics-panel.is-narrow .metric-table tbody,
+  .metrics-panel.is-narrow .metric-table tr,
+  .metrics-panel.is-narrow .metric-table th,
+  .metrics-panel.is-narrow .metric-table td {
+    display: block;
+    width: 100%;
+    max-width: none;
+  }
+
+  .metrics-panel.is-narrow .metric-table tr {
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .metrics-panel.is-narrow .metric-table th {
+    padding-bottom: 0.1rem;
+    border-bottom: none;
+  }
+
+  .metrics-panel.is-narrow .metric-table td {
+    padding-top: 0.15rem;
+  }
 }
 
 /* Status / toast */

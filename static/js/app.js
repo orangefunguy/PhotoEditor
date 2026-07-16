@@ -764,14 +764,189 @@
     return v < 0 ? "delta-pos" : "delta-neg";
   }
 
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
   function card(title, rows) {
     const tr = rows
-      .map(
-        ([k, v, cls]) =>
-          `<tr><th>${k}</th><td class="${cls || ""}">${v}</td></tr>`
-      )
+      .map(([k, v, cls]) => {
+        const raw = v == null ? "—" : String(v);
+        const isLong = raw.length > 48 || raw.includes("Classical") || raw.includes(" · ");
+        const longCls = isLong ? "is-long" : "";
+        const toggle = isLong
+          ? `<button type="button" class="value-toggle" data-value-toggle>Show more</button>`
+          : "";
+        return `<tr>
+          <th>${escapeHtml(k)}</th>
+          <td class="${cls || ""}">
+            <span class="metric-value-text ${longCls}">${escapeHtml(raw)}</span>
+            ${toggle}
+          </td>
+        </tr>`;
+      })
       .join("");
-    return `<div class="metric-card"><h3>${title}</h3><table class="metric-table">${tr}</table></div>`;
+    return `<div class="metric-card is-resizable-card">
+      <h3>
+        <span class="card-title-text">${escapeHtml(title)}</span>
+        <button type="button" class="card-expand-btn" data-card-expand title="Expand / resize this card">Resize</button>
+      </h3>
+      <table class="metric-table">${tr}</table>
+    </div>`;
+  }
+
+  function bindMetricCardInteractions(root) {
+    if (!root) return;
+    root.querySelectorAll("[data-value-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const text = btn.parentElement?.querySelector(".metric-value-text");
+        if (!text) return;
+        const open = text.classList.toggle("is-open");
+        btn.textContent = open ? "Show less" : "Show more";
+      });
+    });
+    root.querySelectorAll("[data-card-expand]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const cardEl = btn.closest(".metric-card");
+        if (!cardEl) return;
+        const expanded = cardEl.classList.toggle("is-expanded");
+        btn.textContent = expanded ? "Done" : "Resize";
+        if (expanded) {
+          // Nudge panel wider if still cramped
+          const w = getMetricsWidth();
+          if (w < 480) setMetricsWidth(Math.min(560, w + 80));
+        }
+      });
+    });
+  }
+
+  const METRICS_W_DEFAULT = 380;
+  const METRICS_W_MIN = 280;
+  const METRICS_W_MAX = 720;
+
+  function getMetricsWidth() {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--metrics-w").trim();
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : METRICS_W_DEFAULT;
+  }
+
+  function setMetricsWidth(px, { persist = true } = {}) {
+    const w = Math.min(METRICS_W_MAX, Math.max(METRICS_W_MIN, Math.round(px)));
+    document.documentElement.style.setProperty("--metrics-w", `${w}px`);
+    const label = document.getElementById("metricsWidthLabel");
+    if (label) label.textContent = String(w);
+    const panel = document.getElementById("metricsPanel");
+    if (panel) panel.classList.toggle("is-narrow", w < 340);
+    if (persist) {
+      try {
+        localStorage.setItem("pe.metricsWidth", String(w));
+      } catch {
+        /* ignore */
+      }
+    }
+    // Reflow preview zoom canvas after panel width change
+    if (state.naturalW) {
+      requestAnimationFrame(() => applyZoomLayout({ keepScroll: true }));
+    }
+    return w;
+  }
+
+  function initMetricsPanelResize() {
+    const stored = (() => {
+      try {
+        return parseInt(localStorage.getItem("pe.metricsWidth") || "", 10);
+      } catch {
+        return NaN;
+      }
+    })();
+    setMetricsWidth(Number.isFinite(stored) ? stored : METRICS_W_DEFAULT, { persist: false });
+
+    const handle = document.getElementById("metricsResizeHandle");
+    const panel = document.getElementById("metricsPanel");
+    const narrower = document.getElementById("metricsNarrower");
+    const wider = document.getElementById("metricsWider");
+    const reset = document.getElementById("metricsWidthReset");
+    if (!handle || !panel) return;
+
+    narrower?.addEventListener("click", () => setMetricsWidth(getMetricsWidth() - 40));
+    wider?.addEventListener("click", () => setMetricsWidth(getMetricsWidth() + 40));
+    reset?.addEventListener("click", () => setMetricsWidth(METRICS_W_DEFAULT));
+
+    let dragging = false;
+    let startX = 0;
+    let startW = 0;
+
+    const onMove = (clientX) => {
+      if (!dragging) return;
+      // Dragging the left edge: move left (smaller clientX) => wider panel
+      const delta = startX - clientX;
+      setMetricsWidth(startW + delta);
+    };
+
+    handle.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      dragging = true;
+      startX = e.clientX;
+      startW = getMetricsWidth();
+      document.body.classList.add("is-resizing-metrics");
+      e.preventDefault();
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (dragging) onMove(e.clientX);
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove("is-resizing-metrics");
+    });
+
+    // Keyboard resize for accessibility
+    handle.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setMetricsWidth(getMetricsWidth() + 20);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setMetricsWidth(getMetricsWidth() - 20);
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        setMetricsWidth(METRICS_W_DEFAULT);
+      }
+    });
+
+    // Touch
+    handle.addEventListener(
+      "touchstart",
+      (e) => {
+        const t = e.touches[0];
+        if (!t) return;
+        dragging = true;
+        startX = t.clientX;
+        startW = getMetricsWidth();
+        document.body.classList.add("is-resizing-metrics");
+      },
+      { passive: true }
+    );
+    window.addEventListener(
+      "touchmove",
+      (e) => {
+        if (!dragging) return;
+        const t = e.touches[0];
+        if (t) onMove(t.clientX);
+      },
+      { passive: true }
+    );
+    window.addEventListener("touchend", () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove("is-resizing-metrics");
+    });
   }
 
   function collectControls() {
@@ -1016,6 +1191,7 @@
       els.metricsRoot.innerHTML =
         '<div class="empty-metrics">Upload an image to see technical metrics.</div>';
     }
+    bindMetricCardInteractions(els.metricsRoot);
   }
 
   // ── Zoom / preview layout ─────────────────────────────────────────
@@ -1699,9 +1875,10 @@
   });
   els.zoomPctInput.addEventListener("change", () => scheduleSessionSave());
 
-  // Initial zoom UI
+  // Initial zoom UI + resizable metrics panel
   updateZoomUi();
   updateUndoRedoButtons();
+  initMetricsPanelResize();
 
   checkHealth();
   setInterval(checkHealth, 15000);

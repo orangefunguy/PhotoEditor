@@ -306,7 +306,16 @@
       </section>
 
       <!-- Right: metrics / history / library -->
-      <aside class="panel metrics-panel">
+      <aside class="panel metrics-panel" id="metricsPanel">
+        <div
+          class="panel-resize-handle"
+          id="metricsResizeHandle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize metrics panel"
+          tabindex="0"
+          title="Drag to resize panel"
+        ></div>
         <div class="panel-header">
           <div class="side-tabs" id="sideTabs" role="tablist">
             <button type="button" class="side-tab active" data-tab="metrics" role="tab" aria-selected="true">
@@ -317,6 +326,14 @@
             </button>
             <button type="button" class="side-tab" data-tab="library" role="tab" aria-selected="false">
               Library
+            </button>
+          </div>
+          <div class="panel-width-controls" title="Resize metrics panel for long text">
+            <button type="button" class="btn" id="metricsNarrower" aria-label="Make panel narrower">−</button>
+            <span class="panel-width-label" id="metricsWidthLabel">380</span>
+            <button type="button" class="btn" id="metricsWider" aria-label="Make panel wider">+</button>
+            <button type="button" class="btn" id="metricsWidthReset" title="Reset panel width" aria-label="Reset width">
+              ↺
             </button>
           </div>
           <span class="badge" id="jobBadge">no job</span>
