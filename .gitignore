@@ -29,6 +29,7 @@ tmp/
 # Secrets
 .env
 .env.*
+!.env.example
 
 # Large local samples (keep repo lean)
 samples/*
