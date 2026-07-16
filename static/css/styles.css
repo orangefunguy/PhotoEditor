@@ -509,12 +509,39 @@ body.is-resizing-metrics img {
   display: none;
 }
 
+/* Status + upload progress directly under the drop box */
+.dropzone-status {
+  margin: 0.55rem 0 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.dropzone-status .status-bar {
+  margin-top: 0;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-input);
+  min-height: 1.5rem;
+}
+
+.dropzone-status .status-bar.busy {
+  border-color: rgba(110, 168, 254, 0.4);
+  background: var(--accent-soft);
+}
+
+.dropzone-status .status-bar.error {
+  border-color: rgba(243, 18, 96, 0.4);
+  background: rgba(243, 18, 96, 0.08);
+}
+
 .upload-progress {
-  margin-top: 0.85rem;
+  margin-top: 0;
   padding: 0.55rem 0.6rem;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(110, 168, 254, 0.35);
-  background: rgba(8, 12, 20, 0.55);
+  background: var(--accent-soft);
   text-align: left;
 }
 
@@ -1534,13 +1561,12 @@ select:focus {
   }
 }
 
-/* Status / toast */
+/* Status / toast (also used under dropzone) */
 .status-bar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   min-height: 1.25rem;
-  margin-top: 0.75rem;
   font-size: 0.78rem;
   color: var(--text-muted);
   font-family: var(--mono);
