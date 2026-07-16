@@ -23,8 +23,9 @@ const EDGE_STATIC_PREFIXES = [
   "/static/index.html",
 ];
 
+// jsDelivr is more reliable for large binaries (wasm) than raw.githubusercontent
 const GITHUB_RAW =
-  "https://raw.githubusercontent.com/orangefunguy/PhotoEditor/main";
+  "https://cdn.jsdelivr.net/gh/orangefunguy/PhotoEditor@main";
 
 export default {
   async fetch(request, env) {
