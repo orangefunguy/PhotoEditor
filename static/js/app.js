@@ -1080,7 +1080,9 @@
   }
 
   function applyZoomLayout(opts = {}) {
-    const { keepCenter = true } = opts;
+    // Image is always top-left aligned in the preview stage.
+    // keepScroll: scale existing pan from top-left origin when zoom changes.
+    const { keepScroll = false } = opts;
     const canvas = els.previewCanvas;
     const scroll = els.previewScroll;
     const hasImg = state.naturalW > 0 && (state.sourceUrl || state.outputUrl);
@@ -1094,11 +1096,11 @@
       return;
     }
 
-    const cx = scroll.scrollLeft + scroll.clientWidth / 2;
-    const cy = scroll.scrollTop + scroll.clientHeight / 2;
+    const prevSl = scroll.scrollLeft;
+    const prevSt = scroll.scrollTop;
 
     const d = displaySize();
-    // Canvas at least fills the viewport so small zooms stay centered
+    // Canvas fills viewport at minimum; image sits at top-left
     const cw = Math.max(scroll.clientWidth, d.w);
     const ch = Math.max(scroll.clientHeight, d.h);
     canvas.style.width = `${cw}px`;
@@ -1113,14 +1115,15 @@
       el.style.height = `${d.h}px`;
     });
 
-    if (keepCenter && state._lastDispW && state._lastDispH) {
+    if (keepScroll && state._lastDispW && state._lastDispH) {
       const scaleX = d.w / Math.max(1, state._lastDispW);
       const scaleY = d.h / Math.max(1, state._lastDispH);
-      scroll.scrollLeft = cx * scaleX - scroll.clientWidth / 2;
-      scroll.scrollTop = cy * scaleY - scroll.clientHeight / 2;
+      scroll.scrollLeft = prevSl * scaleX;
+      scroll.scrollTop = prevSt * scaleY;
     } else {
-      scroll.scrollLeft = Math.max(0, (cw - scroll.clientWidth) / 2);
-      scroll.scrollTop = Math.max(0, (ch - scroll.clientHeight) / 2);
+      // Default: pin to top-left
+      scroll.scrollLeft = 0;
+      scroll.scrollTop = 0;
     }
 
     state._lastDispW = d.w;
@@ -1128,15 +1131,15 @@
     updateZoomUi();
   }
 
-  function setZoom(pct, { fit = false, center = true } = {}) {
+  function setZoom(pct, { fit = false, keepScroll = false } = {}) {
     state.zoomPct = clampZoom(pct);
     state.fitOnLoad = fit;
     if (els.zoomPctInput) els.zoomPctInput.value = String(state.zoomPct);
-    applyZoomLayout({ keepCenter: center });
+    applyZoomLayout({ keepScroll });
   }
 
   function zoomBy(deltaPct) {
-    setZoom(state.zoomPct + deltaPct, { center: true });
+    setZoom(state.zoomPct + deltaPct, { keepScroll: true });
   }
 
   function zoomToFit() {
@@ -1144,13 +1147,11 @@
       state.fitOnLoad = true;
       return;
     }
-    setZoom(fitZoomPct(), { fit: true, center: false });
-    // Recenter after fit
-    applyZoomLayout({ keepCenter: false });
+    setZoom(fitZoomPct(), { fit: true, keepScroll: false });
   }
 
   function zoomTo100() {
-    setZoom(100, { center: true });
+    setZoom(100, { keepScroll: false });
   }
 
   function onImageNaturalReady(img) {
@@ -1163,9 +1164,9 @@
       state.zoomPct = fitZoomPct();
       state.fitOnLoad = false;
       if (els.zoomPctInput) els.zoomPctInput.value = String(state.zoomPct);
-      applyZoomLayout({ keepCenter: false });
+      applyZoomLayout({ keepScroll: false });
     } else {
-      applyZoomLayout({ keepCenter: true });
+      applyZoomLayout({ keepScroll: true });
     }
   }
 
@@ -1437,12 +1438,12 @@
   els.zoomFit.addEventListener("click", () => zoomToFit());
   els.zoom100.addEventListener("click", () => zoomTo100());
   els.zoomPctInput.addEventListener("change", () => {
-    setZoom(els.zoomPctInput.value, { center: true });
+    setZoom(els.zoomPctInput.value, { keepScroll: true });
   });
   els.zoomPctInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      setZoom(els.zoomPctInput.value, { center: true });
+      setZoom(els.zoomPctInput.value, { keepScroll: true });
       els.zoomPctInput.blur();
     }
   });
@@ -1466,10 +1467,11 @@
       const my = e.clientY - rect.top + scroll.scrollTop;
       const prevW = state._lastDispW || displaySize().w;
       const prevH = state._lastDispH || displaySize().h;
-      setZoom(state.zoomPct + direction * step, { center: false });
+      setZoom(state.zoomPct + direction * step, { keepScroll: true });
       const d = displaySize();
       const scaleX = d.w / Math.max(1, prevW);
       const scaleY = d.h / Math.max(1, prevH);
+      // Keep point under cursor stable while image stays top-left anchored in canvas
       scroll.scrollLeft = mx * scaleX - (e.clientX - rect.left);
       scroll.scrollTop = my * scaleY - (e.clientY - rect.top);
     },
@@ -1537,7 +1539,7 @@
       if (Math.abs(state.zoomPct - fit) < 2 || state.fitOnLoad) {
         zoomToFit();
       } else {
-        applyZoomLayout({ keepCenter: true });
+        applyZoomLayout({ keepScroll: true });
       }
       // Update pan cursor
       const scroll = els.previewScroll;
