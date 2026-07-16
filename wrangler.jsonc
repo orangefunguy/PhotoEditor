@@ -1,0 +1,16 @@
+{
+  "name": "photoeditor",
+  "compatibility_date": "2026-06-19",
+  "main": "worker/index.js",
+  "account_id": "831af2f854aa8c4d1f0029bfa7345165",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "editor.herooflegend.com",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "API_ORIGIN": "https://photoeditor-oiom.onrender.com"
+  }
+}
