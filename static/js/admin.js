@@ -141,9 +141,12 @@
       });
       result.hidden = false;
       result.className = "auth-alert ok";
-      result.innerHTML = `${escapeHtml(data.message)}<br/><a href="${escapeHtml(
-        data.invite_link
-      )}" target="_blank" rel="noopener">${escapeHtml(data.invite_link)}</a>`;
+      const days = data.invite_expires_days ?? 3;
+      result.innerHTML = `${escapeHtml(data.message)}<br/>
+        <strong>This invite expires in ${days} days.</strong> The invitee must set their password before then.<br/>
+        <a href="${escapeHtml(
+          data.invite_link
+        )}" target="_blank" rel="noopener">${escapeHtml(data.invite_link)}</a>`;
       e.target.reset();
       loadUsers();
     } catch (err) {

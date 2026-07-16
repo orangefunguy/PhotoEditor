@@ -116,7 +116,8 @@ Leave `SMTP_HOST` unset so Cloudflare is used.
 1. Visit **https://editor.herooflegend.com/login**
 2. Click **Sign up**
 3. Create the first admin (email + strong password)
-4. Sign in → **Admin** → invite teammates by email
+4. Sign in → **Admin** → invite teammates by email  
+   Invite tokens **expire after 3 days** (shown in the email and admin UI).
 
 Invite emails use `FRONTEND_URL` so links are:
 

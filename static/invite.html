@@ -23,6 +23,10 @@
         </div>
       </div>
       <div id="alert" class="auth-alert" hidden></div>
+      <p class="auth-lead" style="margin-top: 0">
+        <strong>Time limit:</strong> invite links expire <strong>3 days</strong> after they are
+        sent. If this link has expired, ask your admin to send a new invite.
+      </p>
       <form id="inviteForm" class="auth-form">
         <label
           >First name <input type="text" name="first_name" required autocomplete="given-name"
@@ -35,7 +39,8 @@
           <input type="password" name="password" required minlength="10" autocomplete="new-password"
         /></label>
         <p class="auth-hint">
-          10+ characters with upper, lower, number, and special character.
+          10+ characters with upper, lower, number, and special character. Complete this form
+          within 3 days of receiving the invite.
         </p>
         <button type="submit" class="btn btn-primary btn-block">Complete profile &amp; enter</button>
       </form>

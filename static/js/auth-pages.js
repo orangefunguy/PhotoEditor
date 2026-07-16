@@ -198,7 +198,10 @@
     if (!form || location.pathname !== "/invite") return;
     const token = params().get("token");
     if (!token) {
-      showAlert("Missing invite token. Open the full link from your email or admin.", "error");
+      showAlert(
+        "Missing invite token. Open the full link from your email or admin. Invites expire after 3 days.",
+        "error"
+      );
       form.hidden = true;
       return;
     }

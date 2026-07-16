@@ -105,8 +105,8 @@ Hover any control’s **?** for an ELI5 tip. The header badge shows **local** wh
 PhotoEditor uses the same product flow as LeadForge CRM:
 
 1. **First visit** → create the **admin** account (email + strong password).
-2. **Admin** invites teammates by email from **Admin** (`/admin`).
-3. Invitees open the link, set name + password (**complete invite**), then use the app.
+2. **Admin** invites teammates by email from **Admin** (`/admin`). **Invite links expire after 3 days.**
+3. Invitees open the link within 3 days, set name + password (**complete invite**), then use the app.
 4. Each profile has **isolated** uploads, outputs, library, and browser cache.
 5. **Admins** can **View profile data** for any workspace member (server-side `view-as` cookie) without sharing passwords.
 

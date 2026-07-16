@@ -29,7 +29,7 @@ from .email_service import send_invite_email, send_welcome_email
 SESSION_COOKIE = "pe_session"
 VIEW_AS_COOKIE = "pe_view_as"
 SESSION_DAYS = 14
-INVITE_DAYS = 7
+INVITE_DAYS = 3
 
 # CRM-aligned password policy (slightly relaxed length for local installs: 10+)
 PASSWORD_MIN = 10

@@ -184,23 +184,28 @@ def invite(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    days = authmod.INVITE_DAYS
     if email_result.ok and email_result.transport != "log":
-        message = f"Invite email sent to {user.email} via {email_result.transport}."
+        message = (
+            f"Invite email sent to {user.email} via {email_result.transport}. "
+            f"The invite link expires in {days} days."
+        )
     elif email_result.ok:
         message = (
-            "Invite created. Email is in log-only mode — copy the link below "
-            "(or check data/invite_links.log)."
+            f"Invite created (expires in {days} days). Email is in log-only mode — copy the link "
+            "below (or check data/invite_links.log)."
         )
     else:
         message = (
             f"Invite created but email failed ({email_result.message}). "
-            "Copy the link below and share it manually."
+            f"Copy the link below and share it manually. Link expires in {days} days."
         )
 
     return {
         "status": "ok",
         "user": user.public_dict(),
         "invite_link": link,
+        "invite_expires_days": days,
         "email": email_result.as_dict(),
         "message": message,
     }

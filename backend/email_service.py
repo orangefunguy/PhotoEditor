@@ -309,7 +309,7 @@ def send_invite_email(
     to: str,
     link: str,
     invited_by: str,
-    days: int = 7,
+    days: int = 3,
 ) -> EmailResult:
     subject = f"You're invited to {APP_NAME}"
     text = (
