@@ -325,14 +325,16 @@
               <div class="preview-canvas" id="previewCanvas">
                 <div class="single-view" id="singleView">
                   <div class="placeholder" id="placeholder">
-                    <div>Load an image to inspect metrics and denoise</div>
-                    <div style="margin-top: 0.5rem"><code>/api/analyze · /api/denoise</code></div>
+                    <div>Drop a photo to start, or continue from History / Library</div>
+                    <div style="margin-top: 0.5rem" class="placeholder-sub">
+                      Your last edit restores automatically when available
+                    </div>
                   </div>
-                  <img id="previewImg" alt="Preview" hidden />
+                  <img id="previewImg" alt="Preview" hidden decoding="async" />
                 </div>
                 <div class="compare-wrap" id="compareWrap">
-                  <img id="compareBefore" alt="Before" />
-                  <img id="compareAfter" class="after" alt="After" />
+                  <img id="compareBefore" alt="Before" hidden decoding="async" />
+                  <img id="compareAfter" class="after" alt="After" hidden decoding="async" />
                   <div class="compare-slider" id="compareSlider"></div>
                 </div>
               </div>

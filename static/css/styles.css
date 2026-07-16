@@ -833,10 +833,17 @@ select:focus {
   max-width: 28rem;
 }
 
-.preview-stage .placeholder code {
+.preview-stage .placeholder .placeholder-sub {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.preview-stage img[hidden],
+.preview-stage img:not([src]),
+.preview-stage img[src=""] {
+  display: none !important;
 }
 
 .single-view {

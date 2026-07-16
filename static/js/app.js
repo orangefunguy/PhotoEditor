@@ -308,25 +308,112 @@
     await persistSession();
   }
 
+  function clearPreviewImages() {
+    const imgs = [els.previewImg, els.compareBefore, els.compareAfter];
+    imgs.forEach((img) => {
+      if (!img) return;
+      img.onload = null;
+      img.onerror = null;
+      img.removeAttribute("src");
+      img.src = "";
+      img.hidden = true;
+    });
+    if (els.compareWrap) els.compareWrap.classList.remove("active");
+    if (els.singleView) els.singleView.style.display = "grid";
+    if (els.placeholder) els.placeholder.hidden = false;
+    state.naturalW = 0;
+    state.naturalH = 0;
+    if (els.zoomMeta) els.zoomMeta.textContent = "Size —";
+  }
+
+  function showBlankWorkspace(message) {
+    revokeTrackedUrls();
+    state.sourceUrl = null;
+    state.outputUrl = null;
+    state.file = null;
+    state.naturalW = 0;
+    state.naturalH = 0;
+    clearPreviewImages();
+    applyZoomLayout();
+    if (els.btnDenoise) els.btnDenoise.disabled = true;
+    if (els.btnAnalyze) els.btnAnalyze.disabled = true;
+    if (els.btnDownload) els.btnDownload.disabled = true;
+    if (els.fileMeta) els.fileMeta.textContent = "No image loaded";
+    if (els.jobBadge) els.jobBadge.textContent = "no job";
+    if (message) setStatus(message);
+  }
+
+  function isUsableBlob(b) {
+    return !!(b && typeof b.size === "number" && b.size > 0);
+  }
+
+  async function rehydrateStepFromServer(step) {
+    if (!step) return step;
+    const next = { ...step };
+    if (!isUsableBlob(next.sourceBlob) && next.jobId) {
+      try {
+        const r = await fetch(`/api/jobs/${next.jobId}/source`, {
+          credentials: "same-origin",
+        });
+        if (r.ok) next.sourceBlob = await r.blob();
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!isUsableBlob(next.outputBlob) && next.jobId) {
+      try {
+        const r = await fetch(`/api/jobs/${next.jobId}/output`, {
+          credentials: "same-origin",
+        });
+        if (r.ok) next.outputBlob = await r.blob();
+      } catch {
+        /* ignore */
+      }
+    }
+    return next;
+  }
+
   function applyHistoryStep(step, { fit = false } = {}) {
-    if (!step) return;
+    if (!step) {
+      showBlankWorkspace();
+      return;
+    }
     state._restoring = true;
     revokeTrackedUrls();
+
+    const hasSource = isUsableBlob(step.sourceBlob);
+    const hasOutput = isUsableBlob(step.outputBlob);
+
+    if (!hasSource) {
+      // Never keep a revoked/stale blob URL — that causes broken image icons
+      state.sourceUrl = null;
+      state.outputUrl = null;
+      state.file = null;
+      clearPreviewImages();
+      state._restoring = false;
+      setStatus("Could not restore image data for this step. Load an image to continue.");
+      els.btnDenoise.disabled = true;
+      els.btnAnalyze.disabled = true;
+      els.btnDownload.disabled = true;
+      els.fileMeta.textContent = step.filename
+        ? `${step.filename} (preview unavailable)`
+        : "Preview unavailable";
+      return;
+    }
+
     state.jobId = step.jobId || state.jobId;
     state.filename = step.filename || state.filename;
     state.sourceMetrics = step.sourceMetrics || state.sourceMetrics;
     state.report = step.report || null;
-    state.view = step.outputBlob ? step.view || "compare" : "source";
+    state.view = hasOutput ? step.view || "compare" : "source";
     state.fitOnLoad = fit;
-    state.sourceUrl = urlFromBlob(step.sourceBlob) || state.sourceUrl;
-    state.outputUrl = step.outputBlob ? urlFromBlob(step.outputBlob) : null;
-    if (step.sourceBlob) {
-      state.file = new File(
-        [step.sourceBlob],
-        step.filename || state.filename || "image.jpg",
-        { type: step.sourceBlob.type || "image/jpeg" }
-      );
-    }
+    state.sourceUrl = urlFromBlob(step.sourceBlob);
+    state.outputUrl = hasOutput ? urlFromBlob(step.outputBlob) : null;
+    state.file = new File(
+      [step.sourceBlob],
+      step.filename || state.filename || "image.jpg",
+      { type: step.sourceBlob.type || "image/jpeg" }
+    );
     if (step.controls) applyControlsToForm(step.controls);
     els.btnDenoise.disabled = !state.sourceUrl;
     els.btnAnalyze.disabled = !state.file;
@@ -699,58 +786,135 @@
   }
 
   async function restoreSessionOnLoad() {
-    if (!Store) return;
+    if (!Store) {
+      showBlankWorkspace();
+      return;
+    }
     try {
       const sess = await Store.loadSession();
       const hist = await Store.loadHistoryState();
-      if (!sess && !(hist.steps && hist.steps.length)) {
+      const hasSteps = !!(hist?.steps && hist.steps.length);
+
+      if (!sess && !hasSteps) {
+        showBlankWorkspace("Ready — drop an image to begin");
+        refreshMetrics();
         refreshCacheMeta();
+        updateUndoRedoButtons();
+        renderHistoryPanel();
         return;
       }
+
       state._restoring = true;
-      if (hist.steps && hist.steps.length) {
-        state.history = hist.steps;
+      setStatus("Restoring your last session…", "busy");
+
+      if (hasSteps) {
+        // Rehydrate any steps that lost blob payloads (e.g. only job ids survived)
+        const steps = [];
+        for (const raw of hist.steps) {
+          // eslint-disable-next-line no-await-in-loop
+          steps.push(await rehydrateStepFromServer(raw));
+        }
+        state.history = steps;
         state.historyIndex = Math.min(
-          Math.max(0, hist.index ?? hist.steps.length - 1),
-          hist.steps.length - 1
+          Math.max(0, hist.index ?? steps.length - 1),
+          steps.length - 1
         );
         state.projectId = hist.projectId || sess?.projectId || Store.uid();
-        applyHistoryStep(state.history[state.historyIndex], { fit: true });
-      } else if (sess?.sourceBlob) {
+        state.libraryEntryId = sess?.libraryEntryId || null;
+        if (sess?.controls) applyControlsToForm(sess.controls);
+
+        const step = state.history[state.historyIndex];
+        if (isUsableBlob(step?.sourceBlob)) {
+          applyHistoryStep(step, { fit: true });
+          setCacheBadge(true, "restored");
+          setStatus(
+            `Restored “${step.filename || "last image"}”${step.label ? ` · ${step.label}` : ""}`
+          );
+        } else {
+          // Keep history metadata but show clean blank preview
+          state._restoring = false;
+          showBlankWorkspace(
+            "Your edit history was found, but the image files are no longer available. Load an image to continue."
+          );
+          updateUndoRedoButtons();
+          renderHistoryPanel();
+        }
+      } else if (sess) {
+        // Session without full history — try blobs, then job endpoints
+        let sourceBlob = isUsableBlob(sess.sourceBlob) ? sess.sourceBlob : null;
+        let outputBlob = isUsableBlob(sess.outputBlob) ? sess.outputBlob : null;
+        if (!sourceBlob && sess.jobId) {
+          sourceBlob = await Store.blobFromUrl(`/api/jobs/${sess.jobId}/source`);
+        }
+        if (!outputBlob && sess.jobId) {
+          outputBlob = await Store.blobFromUrl(`/api/jobs/${sess.jobId}/output`);
+        }
+
         state.projectId = sess.projectId || Store.uid();
         state.libraryEntryId = sess.libraryEntryId || null;
         state.jobId = sess.jobId;
         state.filename = sess.filename || sess.fileName;
         state.sourceMetrics = sess.sourceMetrics;
         state.report = sess.report;
-        state.view = sess.view || "source";
+        state.view = sess.view || (outputBlob ? "compare" : "source");
         state.zoomPct = sess.zoomPct || 100;
         if (sess.controls) applyControlsToForm(sess.controls);
-        state.sourceUrl = urlFromBlob(sess.sourceBlob);
-        state.outputUrl = sess.outputBlob ? urlFromBlob(sess.outputBlob) : null;
-        state.file = new File([sess.sourceBlob], state.filename || "image.jpg", {
-          type: sess.fileType || sess.sourceBlob.type || "image/jpeg",
-        });
-        els.btnDenoise.disabled = false;
-        els.btnAnalyze.disabled = false;
-        els.btnDownload.disabled = !state.outputUrl;
-        els.jobBadge.textContent = state.jobId || "cached";
-        els.fileMeta.textContent = `${state.filename || "Restored"} (from cache)`;
-        $$("#viewToggle button").forEach((b) =>
-          b.classList.toggle("active", b.dataset.view === state.view)
-        );
-        refreshMetrics();
-        setPreview();
+
+        if (sourceBlob) {
+          state.sourceUrl = urlFromBlob(sourceBlob);
+          state.outputUrl = outputBlob ? urlFromBlob(outputBlob) : null;
+          state.file = new File([sourceBlob], state.filename || "image.jpg", {
+            type: sourceBlob.type || sess.fileType || "image/jpeg",
+          });
+          // Seed history so undo/UI stay consistent
+          state.history = [
+            {
+              id: Store.uid(),
+              at: Date.now(),
+              label: "Restored session",
+              summary: state.filename || "cached image",
+              controls: sess.controls || collectControls(),
+              jobId: state.jobId,
+              view: state.view,
+              filename: state.filename,
+              sourceBlob,
+              outputBlob: outputBlob || null,
+              sourceMetrics: state.sourceMetrics,
+              reportSummary: briefReportSummary(state.report),
+              report: state.report,
+            },
+          ];
+          state.historyIndex = 0;
+          els.btnDenoise.disabled = false;
+          els.btnAnalyze.disabled = false;
+          els.btnDownload.disabled = !state.outputUrl;
+          els.jobBadge.textContent = state.jobId || "cached";
+          els.fileMeta.textContent = `${state.filename || "Restored"} (from cache)`;
+          $$("#viewToggle button").forEach((b) =>
+            b.classList.toggle("active", b.dataset.view === state.view)
+          );
+          refreshMetrics();
+          setPreview();
+          setCacheBadge(true, "restored");
+          setStatus(`Restored “${state.filename || "last image"}” from your last session`);
+        } else {
+          showBlankWorkspace(
+            "Welcome back — no saved image for this profile. Drop a photo to start."
+          );
+          refreshMetrics();
+        }
       }
+
       state._restoring = false;
-      setCacheBadge(true, "restored");
-      setStatus("Restored previous session from cache");
       updateUndoRedoButtons();
       renderHistoryPanel();
       refreshCacheMeta();
+      // Persist rehydrated blobs so next login is instant
+      if (state.sourceUrl) persistSession().catch(() => {});
     } catch (e) {
       state._restoring = false;
       console.warn("Session restore failed", e);
+      showBlankWorkspace("Could not restore session. Drop an image to start.");
       refreshCacheMeta();
     }
   }
@@ -1793,24 +1957,40 @@
 
   function setPreview() {
     const img = els.previewImg;
-    if (!state.sourceUrl && !state.outputUrl) {
-      img.hidden = true;
-      els.placeholder.hidden = false;
-      els.compareWrap.classList.remove("active");
-      els.singleView.style.display = "grid";
-      state.naturalW = 0;
-      state.naturalH = 0;
+    const validSource = !!(state.sourceUrl && String(state.sourceUrl).trim());
+    const validOutput = !!(state.outputUrl && String(state.outputUrl).trim());
+
+    if (!validSource && !validOutput) {
+      clearPreviewImages();
       applyZoomLayout();
       return;
     }
-    els.placeholder.hidden = true;
 
-    if (state.view === "compare" && state.sourceUrl && state.outputUrl) {
+    if (els.placeholder) els.placeholder.hidden = true;
+
+    const bindError = (el) => {
+      if (!el) return;
+      el.onerror = () => {
+        // Broken URL (expired job, revoked blob, 401) → clean blank stage
+        console.warn("Preview image failed to load", el.currentSrc || el.src);
+        showBlankWorkspace(
+          "Preview image could not be loaded. Drop an image or re-open from History/Library."
+        );
+      };
+    };
+
+    if (state.view === "compare" && validSource && validOutput) {
       els.singleView.style.display = "none";
       els.compareWrap.classList.add("active");
+      img.hidden = true;
+      img.removeAttribute("src");
+      els.compareBefore.hidden = false;
+      els.compareAfter.hidden = false;
       const onReady = () => onImageNaturalReady(els.compareBefore);
       els.compareBefore.onload = onReady;
       els.compareAfter.onload = null;
+      bindError(els.compareBefore);
+      bindError(els.compareAfter);
       els.compareBefore.src = state.sourceUrl;
       els.compareAfter.src = state.outputUrl;
       if (els.compareBefore.complete && els.compareBefore.naturalWidth) onReady();
@@ -1818,12 +1998,22 @@
     }
 
     els.compareWrap.classList.remove("active");
+    els.compareBefore.hidden = true;
+    els.compareAfter.hidden = true;
+    els.compareBefore.removeAttribute("src");
+    els.compareAfter.removeAttribute("src");
     els.singleView.style.display = "grid";
     img.hidden = false;
     const url =
-      state.view === "output" && state.outputUrl ? state.outputUrl : state.sourceUrl;
+      state.view === "output" && validOutput ? state.outputUrl : state.sourceUrl;
+    if (!url) {
+      clearPreviewImages();
+      applyZoomLayout();
+      return;
+    }
     const onReady = () => onImageNaturalReady(img);
     img.onload = onReady;
+    bindError(img);
     const prev = img.getAttribute("src");
     if (prev === url && img.complete && img.naturalWidth) {
       onReady();
@@ -2286,31 +2476,21 @@
     } catch {
       /* offline */
     }
-    revokeTrackedUrls();
-    state.file = null;
-    state.jobId = null;
-    state.sourceUrl = null;
-    state.outputUrl = null;
-    state.sourceMetrics = null;
-    state.report = null;
     state.history = [];
     state.historyIndex = -1;
     state.projectId = null;
     state.libraryEntryId = null;
     state.filename = null;
-    els.btnDenoise.disabled = true;
-    els.btnAnalyze.disabled = true;
-    els.btnDownload.disabled = true;
-    els.jobBadge.textContent = "no job";
-    els.fileMeta.textContent = "No image loaded";
+    state.jobId = null;
+    state.sourceMetrics = null;
+    state.report = null;
+    showBlankWorkspace("All caches cleared — ready for a new image");
     refreshMetrics();
-    setPreview();
     updateUndoRedoButtons();
     renderHistoryPanel();
     renderLibraryPanel();
     setCacheBadge(false, "cache");
     refreshCacheMeta();
-    setStatus("All caches cleared — ready for a new image");
   });
 
   // Persist zoom changes
@@ -2377,6 +2557,9 @@
 
   checkHealth();
   setInterval(checkHealth, 15000);
+
+  // Clean stage immediately (avoids broken-image flash before restore)
+  clearPreviewImages();
 
   initAuth().then((ok) => {
     if (!ok) return;

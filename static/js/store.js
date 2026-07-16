@@ -88,18 +88,16 @@
 
   async function blobFromUrl(url) {
     if (!url) return null;
-    if (url.startsWith("blob:")) {
-      try {
-        const r = await fetch(url);
-        return await r.blob();
-      } catch {
-        return null;
-      }
-    }
     try {
-      const r = await fetch(url);
+      const r = await fetch(url, { credentials: "same-origin" });
       if (!r.ok) return null;
-      return await r.blob();
+      const blob = await r.blob();
+      // Reject empty / non-image payloads so we don't restore broken previews
+      if (!blob || !blob.size) return null;
+      if (blob.type && !blob.type.startsWith("image/") && !blob.type.includes("octet-stream")) {
+        // still allow octet-stream (job source responses)
+      }
+      return blob;
     } catch {
       return null;
     }
