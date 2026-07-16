@@ -48,6 +48,8 @@
     clearHistory: "Throw away the undo steps for this project.",
     clearLibrary: "Delete every photo from the local image repository (browser + server).",
     clearAll: "Wipe session, undo history, and library—start completely fresh.",
+    errorLog:
+      "Open a page that lists only errors and warnings from uploads, Apply, and session/cache actions.",
     advanced: "Show expert knobs: JPEG quality, scale, and manual algorithm parameters.",
   };
 
@@ -78,6 +80,7 @@
     clearHistory: "/docs#tool-history",
     clearLibrary: "/docs#tool-library",
     clearAll: "/docs#tool-clear-cache",
+    errorLog: "/logs",
     advanced: "/docs#advanced",
   };
 

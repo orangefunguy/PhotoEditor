@@ -41,6 +41,12 @@
     dropzone: $("#dropzone"),
     fileInput: $("#fileInput"),
     fileMeta: $("#fileMeta"),
+    uploadProgress: $("#uploadProgress"),
+    uploadProgressLabel: $("#uploadProgressLabel"),
+    uploadProgressPct: $("#uploadProgressPct"),
+    uploadProgressFill: $("#uploadProgressFill"),
+    uploadProgressBar: $("#uploadProgressBar"),
+    errorLogBadge: $("#errorLogBadge"),
     status: $("#status"),
     statusText: $("#statusText"),
     healthBadge: $("#healthBadge"),
@@ -92,6 +98,7 @@
   };
 
   const Store = window.PEStore;
+  const Log = window.PELog;
 
   // ── paired range + number controls ──────────────────────────────────
   const pairs = [
@@ -125,9 +132,92 @@
   pairs.forEach(([r, n, h, f]) => bindPair(r, n, h, f));
 
   // ── helpers ─────────────────────────────────────────────────────────
-  function setStatus(text, mode = "") {
+  function refreshErrorLogBadge() {
+    if (!els.errorLogBadge || !Log) return;
+    const n = Log.count();
+    if (n > 0) {
+      els.errorLogBadge.hidden = false;
+      els.errorLogBadge.textContent = n > 99 ? "99+" : String(n);
+    } else {
+      els.errorLogBadge.hidden = true;
+    }
+  }
+
+  function logIssue(level, source, message, meta) {
+    if (!Log) return;
+    if (level === "error") Log.error(source, message, meta);
+    else if (level === "warning") Log.warning(source, message, meta);
+    refreshErrorLogBadge();
+  }
+
+  function setStatus(text, mode = "", opts = {}) {
     els.status.className = `status-bar ${mode}`.trim();
     els.statusText.textContent = text;
+    if (mode === "error") {
+      logIssue("error", opts.source || "app", text, opts.meta);
+    } else if (mode === "warning") {
+      logIssue("warning", opts.source || "app", text, opts.meta);
+    }
+  }
+
+  function setUploadProgress(pct, label) {
+    const p = Math.max(0, Math.min(100, Math.round(pct)));
+    if (els.uploadProgress) els.uploadProgress.hidden = false;
+    if (els.uploadProgressFill) els.uploadProgressFill.style.width = `${p}%`;
+    if (els.uploadProgressPct) els.uploadProgressPct.textContent = `${p}%`;
+    if (els.uploadProgressBar) els.uploadProgressBar.setAttribute("aria-valuenow", String(p));
+    if (els.uploadProgressLabel && label) els.uploadProgressLabel.textContent = label;
+    if (els.dropzone) els.dropzone.classList.add("is-uploading");
+  }
+
+  function hideUploadProgress() {
+    if (els.uploadProgress) els.uploadProgress.hidden = true;
+    if (els.uploadProgressFill) els.uploadProgressFill.style.width = "0%";
+    if (els.uploadProgressPct) els.uploadProgressPct.textContent = "0%";
+    if (els.dropzone) els.dropzone.classList.remove("is-uploading");
+  }
+
+  /** POST FormData with upload progress (XHR). Returns parsed JSON. */
+  function postFormWithUploadProgress(url, formData, { onProgress } = {}) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url);
+      xhr.withCredentials = true;
+      xhr.responseType = "json";
+      xhr.upload.onprogress = (e) => {
+        if (!e.lengthComputable) {
+          if (onProgress) onProgress(null, "Uploading…");
+          return;
+        }
+        const pct = (e.loaded / e.total) * 100;
+        if (onProgress) onProgress(pct, "Uploading image…");
+      };
+      xhr.upload.onload = () => {
+        if (onProgress) onProgress(100, "Upload complete · analyzing…");
+      };
+      xhr.onerror = () => reject(new Error("Network error during upload."));
+      xhr.onabort = () => reject(new Error("Upload aborted."));
+      xhr.onload = () => {
+        const status = xhr.status;
+        const data = xhr.response;
+        if (status >= 200 && status < 300) {
+          resolve(data && typeof data === "object" ? data : {});
+          return;
+        }
+        let msg = xhr.statusText || `HTTP ${status}`;
+        try {
+          const body = data || JSON.parse(xhr.responseText || "{}");
+          if (typeof body.detail === "string") msg = body.detail;
+          else if (Array.isArray(body.detail)) {
+            msg = body.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+          }
+        } catch {
+          /* ignore */
+        }
+        reject(new Error(msg));
+      };
+      xhr.send(formData);
+    });
   }
 
   function trackUrl(url) {
@@ -2045,61 +2135,99 @@
   }
 
   async function analyzeFile(file) {
-    setStatus("Analyzing image…", "busy");
+    setStatus("Uploading image…", "busy");
+    setUploadProgress(0, "Starting upload…");
+    if (els.dropzone) els.dropzone.setAttribute("aria-busy", "true");
+
     const fd = new FormData();
     fd.append("file", file);
-    const r = await fetch("/api/analyze", { method: "POST", body: fd });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      throw new Error(err.detail || r.statusText);
-    }
-    const data = await r.json();
-    revokeTrackedUrls();
-    state.projectId = Store ? Store.uid() : String(Date.now());
-    state.libraryEntryId = null;
-    state.jobId = data.job_id;
-    state.filename = file.name;
-    state.sourceMetrics = data.metrics;
-    state.report = null;
-    state.sourceUrl = data.preview_url + `?t=${Date.now()}`;
-    state.outputUrl = null;
-    state.view = "source";
-    state.fitOnLoad = true;
-    state.history = [];
-    state.historyIndex = -1;
-    $$("#viewToggle button").forEach((b) =>
-      b.classList.toggle("active", b.dataset.view === "source")
-    );
-    els.jobBadge.textContent = data.job_id;
-    els.btnDenoise.disabled = false;
-    els.btnAnalyze.disabled = false;
-    els.btnDownload.disabled = true;
-    const g = data.metrics.geometry;
-    els.fileMeta.textContent = `${file.name} · ${g.width}×${g.height} · ${fmtBytes(
-      g.file_bytes
-    )}`;
-    refreshMetrics();
-    setPreview();
 
-    // Seed undo history with original
-    const sourceBlob = file;
-    await pushHistoryStep({
-      id: Store ? Store.uid() : String(Date.now()),
-      at: Date.now(),
-      label: "Original upload",
-      summary: `${g.width}×${g.height} · ${fmtBytes(g.file_bytes)}`,
-      controls: collectControls(),
-      jobId: data.job_id,
-      view: "source",
-      filename: file.name,
-      sourceBlob,
-      outputBlob: null,
-      sourceMetrics: data.metrics,
-      reportSummary: null,
-      report: null,
-    });
-    await saveToLibrary();
-    setStatus("Analysis complete · session cached");
+    let data;
+    try {
+      data = await postFormWithUploadProgress("/api/analyze", fd, {
+        onProgress: (pct, label) => {
+          if (pct == null) {
+            setUploadProgress(15, label || "Uploading…");
+            return;
+          }
+          // Reserve 0–85% for bytes upload; remainder is server analyze
+          const mapped = Math.min(85, pct * 0.85);
+          setUploadProgress(mapped, label);
+        },
+      });
+      setUploadProgress(90, "Analyzing image…");
+      setStatus("Analyzing image…", "busy");
+    } catch (err) {
+      hideUploadProgress();
+      if (els.dropzone) els.dropzone.removeAttribute("aria-busy");
+      logIssue("error", "upload", err.message || "Upload failed", {
+        filename: file?.name,
+        size: file?.size,
+      });
+      throw err;
+    }
+
+    try {
+      revokeTrackedUrls();
+      state.projectId = Store ? Store.uid() : String(Date.now());
+      state.libraryEntryId = null;
+      state.jobId = data.job_id;
+      state.filename = file.name;
+      state.sourceMetrics = data.metrics;
+      state.report = null;
+      state.sourceUrl = data.preview_url + `?t=${Date.now()}`;
+      state.outputUrl = null;
+      state.view = "source";
+      state.fitOnLoad = true;
+      state.history = [];
+      state.historyIndex = -1;
+      $$("#viewToggle button").forEach((b) =>
+        b.classList.toggle("active", b.dataset.view === "source")
+      );
+      els.jobBadge.textContent = data.job_id;
+      els.btnDenoise.disabled = false;
+      els.btnAnalyze.disabled = false;
+      els.btnDownload.disabled = true;
+      const g = data.metrics.geometry;
+      els.fileMeta.textContent = `${file.name} · ${g.width}×${g.height} · ${fmtBytes(
+        g.file_bytes
+      )}`;
+      setUploadProgress(96, "Updating preview…");
+      refreshMetrics();
+      setPreview();
+
+      // Seed undo history with original
+      const sourceBlob = file;
+      await pushHistoryStep({
+        id: Store ? Store.uid() : String(Date.now()),
+        at: Date.now(),
+        label: "Original upload",
+        summary: `${g.width}×${g.height} · ${fmtBytes(g.file_bytes)}`,
+        controls: collectControls(),
+        jobId: data.job_id,
+        view: "source",
+        filename: file.name,
+        sourceBlob,
+        outputBlob: null,
+        sourceMetrics: data.metrics,
+        reportSummary: null,
+        report: null,
+      });
+      setUploadProgress(99, "Caching session…");
+      await saveToLibrary();
+      setUploadProgress(100, "Done");
+      setStatus("Analysis complete · session cached");
+    } catch (err) {
+      logIssue("error", "upload", err.message || "Post-upload processing failed", {
+        filename: file?.name,
+      });
+      throw err;
+    } finally {
+      setTimeout(() => {
+        hideUploadProgress();
+        if (els.dropzone) els.dropzone.removeAttribute("aria-busy");
+      }, 500);
+    }
   }
 
   /** Simulated staged progress while waiting on /api/denoise (no server stream yet). */
@@ -2254,7 +2382,7 @@
       setStatus(`Done · ${summary} · saved to history & library`);
     } catch (e) {
       stopApplyProgress(false);
-      setStatus(e.message || String(e), "error");
+      setStatus(e.message || String(e), "error", { source: "apply" });
     }
   }
 
@@ -2515,80 +2643,108 @@
     }
   });
 
-  // Cache controls
-  els.btnSaveSession.addEventListener("click", async () => {
+  /** Run a session/cache action; errors & warnings go to /logs only (not success noise). */
+  async function runCacheAction(source, fn) {
     try {
+      await fn();
+      refreshErrorLogBadge();
+    } catch (e) {
+      const msg = e.message || String(e);
+      setStatus(msg, "error", { source });
+      // Open dedicated log page so the user sees errors/warnings only
+      setTimeout(() => {
+        location.href = "/logs";
+      }, 350);
+    }
+  }
+
+  // Cache controls
+  els.btnSaveSession.addEventListener("click", () =>
+    runCacheAction("session", async () => {
       await persistSession();
       await saveToLibrary();
       setStatus("Session & library saved");
-    } catch (e) {
-      setStatus(e.message || "Save failed", "error");
-    }
-  });
+    })
+  );
 
-  els.btnClearSession.addEventListener("click", async () => {
-    if (!confirm("Clear the current session cache? The open image stays until you reload.")) return;
-    if (Store) await Store.clearSession();
-    setCacheBadge(false, "cache");
-    refreshCacheMeta();
-    setStatus("Session cache cleared");
-  });
+  els.btnClearSession.addEventListener("click", () =>
+    runCacheAction("session", async () => {
+      if (!confirm("Clear the current session cache? The open image stays until you reload.")) {
+        return;
+      }
+      if (Store) await Store.clearSession();
+      setCacheBadge(false, "cache");
+      refreshCacheMeta();
+      setStatus("Session cache cleared");
+    })
+  );
 
-  els.btnClearHistory.addEventListener("click", async () => {
-    if (!confirm("Clear undo history for this project?")) return;
-    state.history = [];
-    state.historyIndex = -1;
-    if (Store) await Store.clearHistoryState();
-    updateUndoRedoButtons();
-    renderHistoryPanel();
-    await persistSession();
-    setStatus("Edit history cleared");
-  });
+  els.btnClearHistory.addEventListener("click", () =>
+    runCacheAction("history", async () => {
+      if (!confirm("Clear undo history for this project?")) return;
+      state.history = [];
+      state.historyIndex = -1;
+      if (Store) await Store.clearHistoryState();
+      updateUndoRedoButtons();
+      renderHistoryPanel();
+      await persistSession();
+      setStatus("Edit history cleared");
+    })
+  );
 
-  els.btnClearLibrary.addEventListener("click", async () => {
-    if (!confirm("Delete ALL images from the local repository (browser + server)?")) return;
-    if (Store) await Store.clearLibrary();
-    try {
-      await fetch("/api/library", { method: "DELETE" });
-    } catch {
-      /* offline */
-    }
-    state.libraryEntryId = null;
-    renderLibraryPanel();
-    refreshCacheMeta();
-    setStatus("Image library cleared");
-  });
+  els.btnClearLibrary.addEventListener("click", () =>
+    runCacheAction("library", async () => {
+      if (!confirm("Delete ALL images from the local repository (browser + server)?")) return;
+      if (Store) await Store.clearLibrary();
+      const r = await fetch("/api/library", {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!r.ok) {
+        throw new Error("Server library clear failed.");
+      }
+      state.libraryEntryId = null;
+      renderLibraryPanel();
+      refreshCacheMeta();
+      setStatus("Image library cleared");
+    })
+  );
 
-  els.btnClearAllCache.addEventListener("click", async () => {
-    if (
-      !confirm(
-        "Clear ALL cache: session, undo history, and image repository? This cannot be undone."
-      )
-    ) {
-      return;
-    }
-    if (Store) await Store.clearAll();
-    try {
-      await fetch("/api/library", { method: "DELETE" });
-    } catch {
-      /* offline */
-    }
-    state.history = [];
-    state.historyIndex = -1;
-    state.projectId = null;
-    state.libraryEntryId = null;
-    state.filename = null;
-    state.jobId = null;
-    state.sourceMetrics = null;
-    state.report = null;
-    showBlankWorkspace("All caches cleared — ready for a new image");
-    refreshMetrics();
-    updateUndoRedoButtons();
-    renderHistoryPanel();
-    renderLibraryPanel();
-    setCacheBadge(false, "cache");
-    refreshCacheMeta();
-  });
+  els.btnClearAllCache.addEventListener("click", () =>
+    runCacheAction("cache", async () => {
+      if (
+        !confirm(
+          "Clear ALL cache: session, undo history, and image repository? This cannot be undone."
+        )
+      ) {
+        return;
+      }
+      if (Store) await Store.clearAll();
+      const r = await fetch("/api/library", {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!r.ok) {
+        logIssue("warning", "cache", "Local cache cleared but server library clear failed.");
+      }
+      state.history = [];
+      state.historyIndex = -1;
+      state.projectId = null;
+      state.libraryEntryId = null;
+      state.filename = null;
+      state.jobId = null;
+      state.sourceMetrics = null;
+      state.report = null;
+      showBlankWorkspace("All caches cleared — ready for a new image");
+      refreshMetrics();
+      updateUndoRedoButtons();
+      renderHistoryPanel();
+      renderLibraryPanel();
+      setCacheBadge(false, "cache");
+      refreshCacheMeta();
+      // Preserve error log so operators can still inspect issues
+    })
+  );
 
   // Persist zoom changes
   ["zoomIn", "zoomOut", "zoomFit", "zoom100"].forEach((id) => {
@@ -2609,6 +2765,8 @@
       const user = st.user;
       const actor = st.actor || user;
       if (Store?.setUserScope) Store.setUserScope(user.id);
+      if (Log?.setUserScope) Log.setUserScope(user.id);
+      refreshErrorLogBadge();
       const userBadge = document.getElementById("userBadge");
       if (userBadge) {
         userBadge.textContent = user.display_name || user.email;

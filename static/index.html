@@ -61,6 +61,23 @@
             <strong>Drop an image here</strong>
             <span>or click to browse · JPEG, PNG, WebP</span>
             <input type="file" id="fileInput" accept="image/*" />
+            <div class="upload-progress" id="uploadProgress" hidden aria-live="polite">
+              <div class="upload-progress-head">
+                <span class="upload-progress-icon" aria-hidden="true">⬆</span>
+                <span class="upload-progress-label" id="uploadProgressLabel">Uploading…</span>
+                <span class="upload-progress-pct" id="uploadProgressPct">0%</span>
+              </div>
+              <div
+                class="upload-progress-track"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+                id="uploadProgressBar"
+              >
+                <div class="upload-progress-fill" id="uploadProgressFill"></div>
+              </div>
+            </div>
           </div>
           <div class="file-meta" id="fileMeta">No image loaded</div>
 
@@ -283,6 +300,12 @@
               Clear all cache
             </button>
           </div>
+          <div class="btn-row" style="grid-template-columns: 1fr">
+            <a class="btn btn-block" id="btnOpenErrorLog" href="/logs" data-tip="errorLog">
+              Error &amp; warning log
+              <span class="log-badge" id="errorLogBadge" hidden>0</span>
+            </a>
+          </div>
           <div class="file-meta" id="cacheMeta">Cache: —</div>
 
           <div class="status-bar" id="status"><span class="spinner"></span><span id="statusText">Ready</span></div>
@@ -416,6 +439,7 @@
     </main>
 
     <script src="/static/js/store.js"></script>
+    <script src="/static/js/activity-log.js"></script>
     <script src="/static/js/tooltips.js"></script>
     <script src="/static/js/app.js"></script>
   </body>

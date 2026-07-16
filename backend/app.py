@@ -536,4 +536,12 @@ async def admin_page(ctx: AuthContext | None = Depends(get_optional_auth)) -> Re
     return FileResponse(STATIC / "admin.html")
 
 
+@app.get("/logs")
+async def logs_page(ctx: AuthContext | None = Depends(get_optional_auth)) -> Response:
+    """Error & warning log for session/cache/upload issues (client-stored)."""
+    if ctx is None:
+        return RedirectResponse(url="/login?next=/logs", status_code=302)
+    return FileResponse(STATIC / "logs.html")
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")

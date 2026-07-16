@@ -479,10 +479,18 @@ body.is-resizing-metrics img {
   background: var(--bg-input);
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
+  position: relative;
 }
 
 .dropzone:hover,
 .dropzone.dragover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dropzone.is-uploading {
+  cursor: progress;
+  pointer-events: none;
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -499,6 +507,92 @@ body.is-resizing-metrics img {
 
 .dropzone input {
   display: none;
+}
+
+.upload-progress {
+  margin-top: 0.85rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(110, 168, 254, 0.35);
+  background: rgba(8, 12, 20, 0.55);
+  text-align: left;
+}
+
+.upload-progress[hidden] {
+  display: none !important;
+}
+
+.upload-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.75rem;
+}
+
+.upload-progress-icon {
+  animation: bounce-up 0.9s ease-in-out infinite;
+}
+
+.upload-progress-label {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.upload-progress-pct {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+.upload-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+}
+
+.upload-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent), var(--violet));
+  background-size: 200% 100%;
+  animation: progress-shimmer 1.4s linear infinite;
+  transition: width 0.2s ease-out;
+}
+
+@keyframes bounce-up {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.log-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.15rem;
+  margin-left: 0.4rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: rgba(243, 18, 96, 0.25);
+  border: 1px solid rgba(243, 18, 96, 0.5);
+  color: #ff8fb0;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  vertical-align: middle;
 }
 
 .file-meta {

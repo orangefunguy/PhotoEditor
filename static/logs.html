@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PhotoEditor — Error &amp; warning log</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/auth.css" />
+    <link rel="stylesheet" href="/static/css/logs.css" />
+  </head>
+  <body class="auth-page admin-page logs-page">
+    <header class="app-header">
+      <div class="brand">
+        <a class="brand-mark" href="/">PE</a>
+        <div>
+          <h1>Error &amp; warning log</h1>
+          <p id="logSub">Session, cache, and upload issues only</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <a class="btn" href="/">← Editor</a>
+        <button type="button" class="btn" id="btnRefresh">Refresh</button>
+        <button type="button" class="btn btn-ghost" id="btnClearLog">Clear log</button>
+      </div>
+    </header>
+
+    <main class="logs-layout">
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Filters</h2>
+          <span class="badge" id="logCount">0</span>
+        </div>
+        <div class="panel-body">
+          <p class="help-text">
+            Only <strong>errors</strong> and <strong>warnings</strong> are stored. Successful
+            session/cache actions are not listed.
+          </p>
+          <div class="log-filters">
+            <label
+              >Level
+              <select id="filterLevel">
+                <option value="">All</option>
+                <option value="error">Errors</option>
+                <option value="warning">Warnings</option>
+              </select>
+            </label>
+            <label
+              >Source
+              <select id="filterSource">
+                <option value="">All sources</option>
+                <option value="session">Session</option>
+                <option value="cache">Cache</option>
+                <option value="history">History</option>
+                <option value="library">Library</option>
+                <option value="upload">Upload</option>
+                <option value="apply">Apply</option>
+                <option value="auth">Auth</option>
+                <option value="app">App</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel logs-main">
+        <div class="panel-header"><h2>Log entries</h2></div>
+        <div class="panel-body">
+          <div id="logList" class="log-list">Loading…</div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/js/activity-log.js"></script>
+    <script src="/static/js/logs-page.js"></script>
+  </body>
+</html>
