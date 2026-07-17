@@ -287,11 +287,25 @@
           <h2>Actions</h2>
           <div class="docs-card" id="tool-apply">
             <h3>Apply</h3>
-            <p class="eli5"><strong>ELI5:</strong> Press Apply to run the cleaner. An hourglass and progress bar show while it works.</p>
+            <p class="eli5">
+              <strong>ELI5:</strong> Press Apply to run the cleaner. Watch the bar under the page header
+              for progress; Stop cancels; if your computer struggles, the server can finish the job.
+            </p>
             <p>
-              <code>POST /api/denoise</code> with controls JSON + job id or file. The UI shows staged
-              progress (preparing → filter → metrics → done). Returns report + output JPEG, then
-              pushes an undo step and updates the library.
+              Prefer <strong>on-device</strong> processing (Web Worker + OpenCV WASM): hybrid uses a
+              fast edge-preserving bilateral stack (luminance + chroma + finish). Progress and status
+              appear in the <strong>top status bar</strong> (not a floating card over the image).
+              <strong>Stop</strong> or <kbd>Esc</kbd> terminates the worker. If local denoise fails or
+              times out, the client falls back to <code>POST /api/denoise</code> on the server.
+              Success pushes an undo step and updates the library.
+            </p>
+          </div>
+          <div class="docs-card" id="tool-stop-apply">
+            <h3>Stop filter</h3>
+            <p class="eli5"><strong>ELI5:</strong> Cancel a run that is taking too long.</p>
+            <p>
+              Available in the top status bar while Apply is running, next to Apply in Controls, or via
+              Escape. Terminates the denoise Web Worker so you can change settings and try again.
             </p>
           </div>
           <div class="docs-card" id="tool-analyze">
@@ -345,6 +359,32 @@
               <li><strong>Clear library</strong> — browser + server repository</li>
               <li><strong>Clear all cache</strong> — everything local + library wipe</li>
             </ul>
+          </div>
+          <div class="docs-card" id="tool-new-project">
+            <h3>Remove image / start new project</h3>
+            <p class="eli5">
+              <strong>ELI5:</strong> Put the current photo away so you can open a different one. You
+              choose whether past edits stay on the History shelf and whether the library copy is deleted.
+            </p>
+            <p>
+              In the Preview panel header, <strong>New project</strong> clears the active image and
+              session workspace. Options:
+            </p>
+            <ul>
+              <li>
+                <strong>Keep edit history</strong> (default) — undo steps stay in the History tab so
+                you can restore a past state. Current work is saved to the library first (unless you
+                also remove it). Uncheck to drop the undo stack.
+              </li>
+              <li>
+                <strong>Also remove from library</strong> — delete this image from the browser and
+                server repository. Only available when the open image is linked to a library entry.
+              </li>
+            </ul>
+            <p>
+              Uploading a new file after this starts a fresh project (new undo stack for that image).
+              Library copies you did not delete remain under the Library tab.
+            </p>
           </div>
         </section>
 

@@ -11,6 +11,8 @@ PhotoEditor is a local web workbench that:
 
 Repository: [github.com/orangefunguy/PhotoEditor](https://github.com/orangefunguy/PhotoEditor)
 
+Release notes for recent UX and denoise reliability work: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
+
 ---
 
 ## Features
@@ -22,9 +24,11 @@ Repository: [github.com/orangefunguy/PhotoEditor](https://github.com/orangefungu
 | **Denoise strength** | 0–100% master control mapped to algorithm parameters |
 | **Category targets** | Optional % reduction targets for Laplacian variance, residual std, local std mean (auto-searches strength) |
 | **Photometric offsets** | Luminance and R/G/B absolute level deltas after denoise |
-| **Algorithms** | Hybrid (default), Non-local means, Bilateral, Gaussian, Median |
+| **Algorithms** | Hybrid (default, edge-preserving bilateral stack on-device), NLM when OpenCV provides it, Bilateral, Gaussian, Median |
+| **On-device Apply** | Web Worker + OpenCV WASM; progress in the **top status bar**; **Stop** / Esc to cancel; server fallback if local fails |
 | **Advanced** | JPEG quality, optional scale, NLM `h`, bilateral σ, Gaussian σ |
 | **Preview** | Source / output / interactive before–after slider |
+| **New project** | Clear the open image; optionally keep History and/or remove the library entry |
 | **Zoom** | Preview zoom with **size %** (native pixels), Fit, 1:1, scroll-wheel zoom, drag pan |
 | **Session cache** | Auto-saves work to browser IndexedDB (survives reload / brief offline) |
 | **Undo history** | Per-project edit stack with Undo/Redo and clickable history timeline |
@@ -127,8 +131,8 @@ Without SMTP, invite links are printed in the server console and appended to `da
 
 **Master denoise**
 
-- **Strength (0–100%)** — overall filter intensity. Uses hybrid NLM + bilateral by default.
-- **Algorithm** — switch to pure NLM, bilateral, Gaussian, or median.
+- **Strength (0–100%)** — overall filter intensity. Hybrid uses an edge-preserving bilateral pipeline on-device (fast); the server still uses OpenCV NLM+bilateral when fallback runs.
+- **Algorithm** — hybrid (default), NLM (native OpenCV when available), bilateral, Gaussian, or median.
 
 **Category targets (%)** — optional; `0` means “use master strength only”:
 
@@ -169,7 +173,10 @@ The toolbar also shows `nativeW×nativeH px → displayW×displayH px · fit|1:1
 
 ### 4. Apply denoise
 
-- Click **Apply denoise**.
+- Click **Apply**.
+- Progress and status appear in the **top status bar** (under the header)—not a floating card over the image.
+- **Stop** (top bar or Esc) cancels an in-flight run.
+- Filters prefer **this device** (Web Worker + OpenCV WASM). If local processing fails or times out, Apply **falls back to the server** automatically.
 - Preview switches to **Compare** (drag the slider).
 - Metrics panel shows the full **comparison report**:
   - Geometry delta (resolution preserved?)
@@ -183,9 +190,10 @@ The toolbar also shows `nativeW×nativeH px → displayW×displayH px · fit|1:1
 
 - **Download** saves `photoeditor_<job>_denoised.jpg`.
 
-### 6. Reset
+### 6. Reset / new project
 
 - **Reset controls** restores default sliders without clearing the image.
+- **New project** (Preview header) removes the open image so you can start another; optional keep History / remove from library.
 
 ### 7. Session cache, history & library
 

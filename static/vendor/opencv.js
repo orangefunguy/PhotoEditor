@@ -1,5 +1,7 @@
 let Module = {};
-let opencvWasmBinaryFile = './opencv.wasm';
+// Absolute path: in Web Workers scriptDirectory is /static/js/ (the worker URL),
+// so a relative './opencv.wasm' would 404 with JSON and fail WebAssembly.Module.
+let opencvWasmBinaryFile = '/static/vendor/opencv.wasm';
 
 (function(root, factory) {
     if (typeof define === 'function' && define.amd) {
@@ -59,6 +61,13 @@ let opencvWasmBinaryFile = './opencv.wasm';
                 function locateFile(path) {
                     if (Module["locateFile"]) {
                         return Module["locateFile"](path, scriptDirectory)
+                    }
+                    // Absolute URLs/paths must not be joined with scriptDirectory.
+                    // In Web Workers scriptDirectory is /static/js/, so joining an
+                    // absolute "/static/vendor/opencv.wasm" produced the broken URL
+                    // "/static/js//static/vendor/opencv.wasm" (JSON 404 → bad WASM magic).
+                    if (path && (path.indexOf("://") !== -1 || path.charAt(0) === "/")) {
+                        return path
                     }
                     return scriptDirectory + path
                 }

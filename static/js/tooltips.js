@@ -40,6 +40,8 @@
       "Width of the simple Gaussian blur. Higher = softer. 0 = auto from Strength.",
     apply:
       "Apply high-quality denoise on this device (OpenCV + luminance NLM). Removes grain while protecting edges and color — not a soft blur.",
+    stopApply:
+      "Cancel the filter that is running. Stops the on-device engine so you can change settings and try again.",
     analyze: "Measure the loaded image again on this device without cleaning it.",
     download: "Save the cleaned photo to your computer as a JPEG.",
     reset: "Put all sliders and options back to defaults. Your image stays loaded.",
@@ -48,6 +50,12 @@
     clearHistory: "Throw away the undo steps for this project.",
     clearLibrary: "Delete every photo from the local image repository (browser + server).",
     clearAll: "Wipe session, undo history, and library—start completely fresh.",
+    newProject:
+      "Clear the current image from the preview so you can start on a new one. You can keep edit history and/or remove the image from your library.",
+    newProjectKeepHistory:
+      "Leave undo steps in the History panel so you can click them later to restore past edits. Turning this off throws the undo stack away.",
+    newProjectRemoveLib:
+      "Also delete this photo from the image repository (browser + server). Leave unchecked to keep the library copy.",
     errorLog:
       "Open a page that lists only errors and warnings from uploads, Apply, and session/cache actions.",
     advanced: "Show expert knobs: JPEG quality, scale, and manual algorithm parameters.",
@@ -80,6 +88,9 @@
     clearHistory: "/docs#tool-history",
     clearLibrary: "/docs#tool-library",
     clearAll: "/docs#tool-clear-cache",
+    newProject: "/docs#tool-new-project",
+    newProjectKeepHistory: "/docs#tool-new-project",
+    newProjectRemoveLib: "/docs#tool-new-project",
     errorLog: "/logs",
     advanced: "/docs#advanced",
   };

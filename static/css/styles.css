@@ -132,6 +132,120 @@ select {
   font-size: 0.8rem;
 }
 
+/* Top status + Apply progress (global, under header) */
+.top-status-bar {
+  position: sticky;
+  top: var(--header-h);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem 1.25rem;
+  flex-wrap: wrap;
+  min-height: 40px;
+  padding: 0.45rem 1.25rem;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(14, 17, 24, 0.94);
+  backdrop-filter: blur(10px);
+}
+
+.top-status-main {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  flex: 1 1 200px;
+}
+
+.top-status-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.top-status-spinner[hidden] {
+  display: none !important;
+}
+
+.top-status-text {
+  font-size: 0.84rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-status-bar.is-busy .top-status-text {
+  color: var(--accent);
+}
+
+.top-status-bar.is-error .top-status-text {
+  color: var(--bad);
+}
+
+.top-status-bar.is-warning .top-status-text {
+  color: var(--warn);
+}
+
+.top-status-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 1 1 280px;
+  max-width: min(560px, 100%);
+  min-width: 0;
+}
+
+.top-status-progress[hidden] {
+  display: none !important;
+}
+
+.top-status-track {
+  flex: 1;
+  min-width: 80px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+
+.top-status-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent), var(--violet));
+  background-size: 200% 100%;
+  animation: progress-shimmer 1.4s linear infinite;
+  transition: width 0.2s ease-out;
+}
+
+.top-status-pct {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 2.6rem;
+  text-align: right;
+}
+
+.top-status-stop {
+  flex-shrink: 0;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  min-width: 3.6rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .badge.cached .dot {
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent);
@@ -898,6 +1012,83 @@ select:focus {
   font-weight: 600;
 }
 
+.preview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.preview-header-actions #btnNewProject {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.7rem;
+  white-space: nowrap;
+}
+
+/* Modal: remove image / start new project */
+.app-dialog {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text);
+  padding: 0;
+  max-width: min(440px, calc(100vw - 2rem));
+  width: 100%;
+  box-shadow: var(--shadow);
+}
+
+.app-dialog::backdrop {
+  background: rgba(6, 8, 12, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.app-dialog-form {
+  padding: 1.15rem 1.25rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.app-dialog-form h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.app-dialog-lead {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.app-dialog-form .checkbox-row {
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.app-dialog-form .checkbox-row input {
+  margin-top: 0.2rem;
+}
+
+.app-dialog-form .help-text {
+  margin: 0;
+}
+
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-soft);
+}
+
 .preview-stage {
   position: relative;
   flex: 1;
@@ -1413,6 +1604,37 @@ select:focus {
   }
 }
 
+/* Stop filter during Apply */
+.btn-stop {
+  min-width: 4.5rem;
+  border-color: rgba(243, 18, 96, 0.55);
+  color: #ffb4c8;
+  background: rgba(243, 18, 96, 0.12);
+  font-weight: 600;
+}
+
+.btn-stop:hover:not(:disabled) {
+  border-color: var(--bad);
+  background: rgba(243, 18, 96, 0.22);
+  color: #fff;
+}
+
+.btn-stop-inline {
+  width: 100%;
+  margin-top: 0.55rem;
+  font-size: 0.82rem;
+  padding: 0.4rem 0.75rem;
+}
+
+.btn-stop-overlay {
+  margin-top: 0.85rem;
+  min-width: 6.5rem;
+}
+
+.apply-btn-row {
+  align-items: stretch;
+}
+
 /* Apply progress */
 .apply-progress {
   margin-top: 0.65rem;
@@ -1760,4 +1982,10 @@ select:focus {
 .footer-note a {
   color: var(--accent);
 }
+}
+
+
+/* force-hide mid-preview overlay — progress lives in top status bar */
+.preview-processing {
+  display: none !important;
 }

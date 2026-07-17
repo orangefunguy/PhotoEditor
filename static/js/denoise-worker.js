@@ -9,6 +9,17 @@
 
 let _cv = null;
 let _cvReady = null;
+/** @type {Uint8Array|null} */
+let _wasmBinary = null;
+
+/**
+ * Absolute origin-relative paths only.
+ * Never resolve relative to the worker URL (/static/js/…): that 404s as JSON
+ * `{"detail":"Not Found"}` and yields:
+ *   WebAssembly.Module(): expected magic word 00 61 73 6d, found 7b 22 64 65
+ */
+const OPENCV_JS = "/static/vendor/opencv.js";
+const OPENCV_WASM = "/static/vendor/opencv.wasm";
 
 function progress(id, pct, label) {
   self.postMessage({ type: "progress", id, pct, label });
@@ -39,89 +50,255 @@ function strengthToParams(strengthPct) {
   };
 }
 
-function loadOpenCV() {
-  if (_cvReady) return _cvReady;
-  _cvReady = new Promise((resolve, reject) => {
-    const finish = (api) => {
-      if (api && typeof api.bilateralFilter === "function") {
-        _cv = api;
-        resolve(api);
-        return true;
-      }
-      return false;
-    };
+function vendorPath(path) {
+  // Always pin under /static/vendor/ regardless of what OpenCV asks for
+  const name = String(path || "opencv.wasm").replace(/^\.\//, "").split("/").pop();
+  return `/static/vendor/${name}`;
+}
 
+function assertWasmMagic(bytes, url) {
+  if (
+    !bytes ||
+    bytes.length < 4 ||
+    bytes[0] !== 0x00 ||
+    bytes[1] !== 0x61 ||
+    bytes[2] !== 0x73 ||
+    bytes[3] !== 0x6d
+  ) {
+    const head = bytes
+      ? new TextDecoder().decode(bytes.slice(0, 48))
+      : "(empty)";
+    throw new Error(
+      `OpenCV WASM invalid at ${url} (expected \\0asm, got: ${String(head)
+        .replace(/\s+/g, " ")
+        .slice(0, 60)})`
+    );
+  }
+}
+
+/**
+ * Fetch with timeout so engine load never hangs forever at "8%".
+ * @param {string} url
+ * @param {RequestInit} [init]
+ * @param {number} [timeoutMs]
+ */
+async function fetchWithTimeout(url, init = {}, timeoutMs = 45000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      throw new Error(`Timed out loading ${url} after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch WASM and verify the magic header `\0asm`.
+ * Tries primary absolute path, then a CDN fallback if origin is missing the file.
+ * @param {(pct:number, label?:string)=>void} [onProgress]
+ */
+async function fetchWasmBinary(onProgress) {
+  if (_wasmBinary) return _wasmBinary;
+
+  const candidates = [
+    OPENCV_WASM,
+    // jsDelivr mirrors GitHub main (same source the edge worker uses)
+    "https://cdn.jsdelivr.net/gh/orangefunguy/PhotoEditor@main/static/vendor/opencv.wasm",
+  ];
+
+  let lastErr = null;
+  for (let i = 0; i < candidates.length; i++) {
+    const url = candidates[i];
     try {
-      // Ensure script is loaded
-      if (typeof self.cv === "undefined") {
-        importScripts("/static/vendor/opencv.js");
+      onProgress?.(4 + i * 8, i === 0 ? "Downloading denoise engine…" : "Trying CDN backup…");
+      const res = await fetchWithTimeout(
+        url,
+        {
+          credentials: url.startsWith("/") ? "same-origin" : "omit",
+          mode: url.startsWith("/") ? "same-origin" : "cors",
+        },
+        45000
+      );
+      if (!res.ok) {
+        lastErr = new Error(`HTTP ${res.status} for ${url}`);
+        continue;
       }
+      onProgress?.(18, "Receiving engine binary…");
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      assertWasmMagic(bytes, url);
+      _wasmBinary = bytes;
+      onProgress?.(28, "Engine binary ready");
+      return _wasmBinary;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  throw lastErr || new Error("Failed to load OpenCV WASM");
+}
 
-      const factoryOrCv = self.cv;
-      if (!factoryOrCv) {
-        reject(new Error("OpenCV not loaded"));
+function isCvApi(api) {
+  return !!(api && typeof api.bilateralFilter === "function");
+}
+
+/**
+ * @param {(pct:number, label?:string)=>void} [onProgress]
+ */
+function loadOpenCV(onProgress) {
+  // If already loading/loaded, still surface progress for UI
+  if (_cvReady) {
+    if (isCvApi(_cv)) {
+      onProgress?.(35, "Denoise engine ready");
+      return _cvReady;
+    }
+    // Chain progress onto in-flight load
+    return _cvReady.then((api) => {
+      onProgress?.(35, "Denoise engine ready");
+      return api;
+    });
+  }
+  _cvReady = (async () => {
+    if (isCvApi(_cv)) return _cv;
+
+    // 1) Bytes first — never let Emscripten sync-XHR a relative path
+    const wasmBinary = await fetchWasmBinary(onProgress);
+
+    // 2) Glue script (factory) — import only after we have valid WASM
+    onProgress?.(30, "Loading engine runtime…");
+    try {
+      if (typeof self.cv === "undefined") {
+        importScripts(OPENCV_JS);
+      }
+    } catch (e) {
+      throw new Error(`Failed to import OpenCV glue: ${e && e.message ? e.message : e}`);
+    }
+
+    const factoryOrCv = self.cv;
+    if (!factoryOrCv) {
+      throw new Error("OpenCV not loaded (self.cv missing)");
+    }
+
+    if (isCvApi(factoryOrCv)) {
+      _cv = factoryOrCv;
+      onProgress?.(35, "Denoise engine ready");
+      return _cv;
+    }
+
+    if (typeof factoryOrCv !== "function") {
+      throw new Error("Unexpected OpenCV export shape");
+    }
+
+    onProgress?.(32, "Compiling denoise engine (first time may take a bit)…");
+
+    const api = await new Promise((resolve, reject) => {
+      let settled = false;
+      const done = (obj) => {
+        if (settled) return false;
+        if (isCvApi(obj)) {
+          settled = true;
+          resolve(obj);
+          return true;
+        }
+        return false;
+      };
+      const fail = (err) => {
+        if (settled) return;
+        settled = true;
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+
+      const moduleArg = {
+        // Preloaded binary — getBinary() short-circuits without network
+        wasmBinary,
+        /**
+         * Never allow scriptDirectory (/static/js/) to prefix absolute paths.
+         * Broken form seen in prod: /static/js//static/vendor/opencv.wasm
+         */
+        locateFile(path) {
+          const s = String(path || "");
+          if (s.includes("opencv.wasm") || s.endsWith(".wasm")) return OPENCV_WASM;
+          if (s.includes("opencv.js")) return OPENCV_JS;
+          if (s.indexOf("://") !== -1 || s.charAt(0) === "/") return s;
+          return vendorPath(s);
+        },
+        /**
+         * Bypass Emscripten sync-XHR entirely. Older opencv.js builds ignore
+         * locateFile in workers (scriptDirectory = /static/js/) and load JSON 404s.
+         */
+        // Async compile so the worker event loop can keep posting progress /
+        // respond to terminate; sync WebAssembly.Module freezes the worker.
+        instantiateWasm(info, receiveInstance) {
+          WebAssembly.instantiate(wasmBinary, info)
+            .then((pair) => {
+              receiveInstance(pair.instance, pair.module);
+            })
+            .catch((e) => fail(e));
+          return {}; // signal async instantiation to Emscripten
+        },
+        onRuntimeInitialized() {
+          if (!done(moduleArg) && !done(self.cv)) {
+            fail(new Error("OpenCV initialized but bilateralFilter missing"));
+          }
+        },
+      };
+
+      try {
+        const ret = factoryOrCv(moduleArg);
+        if (done(ret) || done(moduleArg) || done(self.cv)) return;
+        if (ret && typeof ret.then === "function") {
+          ret.then((v) => {
+            if (!done(v) && !done(moduleArg) && !done(self.cv)) {
+              fail(new Error("OpenCV promise resolved without API"));
+            }
+          }, fail);
+        }
+      } catch (e) {
+        fail(e);
         return;
       }
 
-      // Already initialized API object
-      if (finish(factoryOrCv)) return;
-
-      // Worker UMD: cv is a factory(Module) → returns API
-      if (typeof factoryOrCv === "function") {
-        const moduleArg = {
-          locateFile(path) {
-            return `/static/vendor/${path}`;
-          },
-          onRuntimeInitialized() {
-            // Prefer returned module; also check self.cv after init
-            if (!finish(moduleArg) && !finish(self.cv)) {
-              reject(new Error("OpenCV initialized but bilateralFilter missing"));
-            }
-          },
-        };
-        try {
-          const ret = factoryOrCv(moduleArg);
-          if (ret && ret !== factoryOrCv) {
-            // Some builds assign API onto return value
-            if (typeof ret.bilateralFilter === "function") {
-              finish(ret);
-            } else if (ret.onRuntimeInitialized === undefined) {
-              // Wire init if not already
-              const prev = moduleArg.onRuntimeInitialized;
-              ret.onRuntimeInitialized = prev;
-              Object.assign(ret, { locateFile: moduleArg.locateFile });
-            }
-          }
-        } catch (e) {
-          reject(e);
+      let n = 0;
+      const t = setInterval(() => {
+        n += 1;
+        if (n % 50 === 0) {
+          onProgress?.(
+            Math.min(34, 32 + n / 250),
+            "Compiling denoise engine…"
+          );
+        }
+        if (done(self.cv) || done(moduleArg)) {
+          clearInterval(t);
           return;
         }
-        // Poll fallback (WASM async compile)
-        let n = 0;
-        const t = setInterval(() => {
-          n += 1;
-          if (finish(self.cv) || finish(moduleArg) || n > 600) {
-            clearInterval(t);
-            if (!_cv) reject(new Error("OpenCV runtime init timeout"));
-          }
-        }, 20);
-        return;
-      }
+        if (n > 1000) {
+          // ~20s
+          clearInterval(t);
+          fail(
+            new Error(
+              "OpenCV runtime init timeout — hard-refresh and try again (engine may still be downloading)."
+            )
+          );
+        }
+      }, 20);
+    });
 
-      reject(new Error("Unexpected OpenCV export shape"));
-    } catch (e) {
-      reject(e);
-    }
+    _cv = api;
+    onProgress?.(35, "Denoise engine ready");
+    return _cv;
+  })().catch((err) => {
+    // Allow a later retry after a transient failure
+    _cvReady = null;
+    throw err;
   });
   return _cvReady;
 }
 
-// Preload OpenCV glue (WASM compiles on first loadOpenCV)
-try {
-  importScripts("/static/vendor/opencv.js");
-} catch (e) {
-  console.error("Failed to import OpenCV", e);
-}
+// Do NOT importScripts(opencv.js) at top-level — that lets Emscripten race a
+// relative wasm fetch before we can inject wasmBinary / instantiateWasm.
 
 // ── Image helpers ────────────────────────────────────────────────────
 
@@ -165,141 +342,97 @@ function odd(n, minV, maxV) {
 }
 
 /**
- * High-quality luminance NLM (single channel).
- * Photo-industry approach: denoise Y, lightly treat chroma — preserves color & edges.
+ * Try OpenCV native NLM if this build includes it (many browser builds do not).
+ * @returns {boolean} true if dst was filled
  */
-function nlmLuma(yPlane, w, h, hParam, templateWindow, searchWindow, onProgress) {
-  let tw = odd(templateWindow || 7, 3, 7);
-  let sw = odd(searchWindow || 21, 7, 21);
-  // Cap search on huge images for responsiveness while staying high quality
-  const px = w * h;
-  if (px > 4_000_000) sw = Math.min(sw, 15);
-  if (px > 8_000_000) sw = Math.min(sw, 11);
-
-  const tr = (tw - 1) >> 1;
-  const sr = (sw - 1) >> 1;
-  const hVal = Math.max(0.4, hParam);
-  const invH2 = 1 / (hVal * hVal);
-  const out = new Float32Array(px);
-
-  // Integral image of y and y^2 for fast patch distance approximation +
-  // refined center-weighted residual for quality
-  const y = yPlane; // Float32 or use as numbers
-  const yF = y instanceof Float32Array ? y : Float32Array.from(y);
-
-  let done = 0;
-  const total = px;
-  const reportEvery = Math.max(5000, (total / 40) | 0);
-
-  for (let cy = 0; cy < h; cy++) {
-    for (let cx = 0; cx < w; cx++) {
-      let wsum = 0;
-      let vsum = 0;
-      const y0 = Math.max(0, cy - sr);
-      const y1 = Math.min(h - 1, cy + sr);
-      const x0 = Math.max(0, cx - sr);
-      const x1 = Math.min(w - 1, cx + sr);
-
-      for (let ny = y0; ny <= y1; ny++) {
-        for (let nx = x0; nx <= x1; nx++) {
-          // Patch SSD
-          let dist = 0;
-          let count = 0;
-          for (let dy = -tr; dy <= tr; dy++) {
-            const ay = clamp(cy + dy, 0, h - 1);
-            const by = clamp(ny + dy, 0, h - 1);
-            for (let dx = -tr; dx <= tr; dx++) {
-              const ax = clamp(cx + dx, 0, w - 1);
-              const bx = clamp(nx + dx, 0, w - 1);
-              const d = yF[ay * w + ax] - yF[by * w + bx];
-              dist += d * d;
-              count++;
-            }
-          }
-          dist /= count;
-          const weight = Math.exp(-dist * invH2);
-          wsum += weight;
-          vsum += weight * yF[ny * w + nx];
-        }
-      }
-      out[cy * w + cx] = wsum > 1e-12 ? vsum / wsum : yF[cy * w + cx];
-      done++;
-      if (onProgress && done % reportEvery === 0) {
-        onProgress((done / total) * 100);
-      }
+function tryOpenCvNlm(cv, srcMat, dst, hNlm, tw, sw) {
+  const fn =
+    cv.fastNlMeansDenoisingColored ||
+    cv.fastNlMeansDenoising ||
+    null;
+  if (typeof fn !== "function") return false;
+  try {
+    // Colored API: (src, dst, h, hColor, templateWindowSize, searchWindowSize)
+    if (cv.fastNlMeansDenoisingColored) {
+      cv.fastNlMeansDenoisingColored(srcMat, dst, hNlm, hNlm, odd(tw, 3, 7), odd(sw, 7, 21));
+    } else {
+      cv.fastNlMeansDenoising(srcMat, dst, hNlm, odd(tw, 3, 7), odd(sw, 7, 21));
     }
+    return true;
+  } catch {
+    return false;
   }
-  return out;
 }
 
-/** Faster multi-scale NLM: denoise at ½ res, upsample, refine with bilateral-friendly blend */
-function nlmLumaMultiscale(yPlane, w, h, hParam, tw, sw, onProgress) {
-  const px = w * h;
-  // Small images: full NLM
-  if (px <= 900_000) {
-    return nlmLuma(yPlane, w, h, hParam, tw, sw, onProgress);
-  }
-
-  // Downscale 2× with box
-  const w2 = Math.max(1, w >> 1);
-  const h2 = Math.max(1, h >> 1);
-  const small = new Float32Array(w2 * h2);
-  for (let y = 0; y < h2; y++) {
-    for (let x = 0; x < w2; x++) {
-      const x0 = x * 2;
-      const y0 = y * 2;
-      const x1 = Math.min(w - 1, x0 + 1);
-      const y1 = Math.min(h - 1, y0 + 1);
-      small[y * w2 + x] =
-        (yPlane[y0 * w + x0] +
-          yPlane[y0 * w + x1] +
-          yPlane[y1 * w + x0] +
-          yPlane[y1 * w + x1]) *
-        0.25;
-    }
-  }
-
+/**
+ * Fast high-quality hybrid: edge-preserving bilateral on luminance + light chroma
+ * clean + RGB finish. Avoids pure-JS NLM (too slow in browsers → "Denoise timed out").
+ */
+function applyHybridFast(cv, srcMat, dst, d, sc, ss, strengthBoost, onProgress) {
   onProgress?.(10);
-  // Slightly stronger h at coarse scale
-  const coarse = nlmLuma(small, w2, h2, hParam * 1.05, tw, Math.min(sw, 17), (p) =>
-    onProgress?.(10 + p * 0.55)
-  );
+  const ycrcb = new cv.Mat();
+  cv.cvtColor(srcMat, ycrcb, cv.COLOR_RGB2YCrCb);
+  const channels = new cv.MatVector();
+  cv.split(ycrcb, channels);
+  const yMat = channels.get(0);
+  const crMat = channels.get(1);
+  const cbMat = channels.get(2);
 
-  // Bilinear upsample
-  const up = new Float32Array(px);
-  for (let y = 0; y < h; y++) {
-    const fy = (y / Math.max(1, h - 1)) * (h2 - 1);
-    const y0 = Math.floor(fy);
-    const y1 = Math.min(h2 - 1, y0 + 1);
-    const ty = fy - y0;
-    for (let x = 0; x < w; x++) {
-      const fx = (x / Math.max(1, w - 1)) * (w2 - 1);
-      const x0 = Math.floor(fx);
-      const x1 = Math.min(w2 - 1, x0 + 1);
-      const tx = fx - x0;
-      const v00 = coarse[y0 * w2 + x0];
-      const v10 = coarse[y0 * w2 + x1];
-      const v01 = coarse[y1 * w2 + x0];
-      const v11 = coarse[y1 * w2 + x1];
-      up[y * w + x] =
-        v00 * (1 - tx) * (1 - ty) +
-        v10 * tx * (1 - ty) +
-        v01 * (1 - tx) * ty +
-        v11 * tx * ty;
-    }
+  // Stronger bilateral on Y for nlm-like strength
+  const yD = odd(d + (strengthBoost ? 2 : 0), 3, 15);
+  const ySC = sc * (strengthBoost ? 1.15 : 1.0);
+  const ySS = ss * (strengthBoost ? 1.1 : 1.0);
+
+  onProgress?.(30);
+  const yDst = new cv.Mat();
+  cv.bilateralFilter(yMat, yDst, yD, ySC, ySS, cv.BORDER_DEFAULT);
+
+  // Optional second pass on Y for stronger denoise (still O(n), not NLM)
+  onProgress?.(50);
+  const yDst2 = new cv.Mat();
+  if (strengthBoost || sc > 40) {
+    const d2 = odd(Math.max(3, (yD / 2) | 0), 3, 9);
+    cv.bilateralFilter(yDst, yDst2, d2, ySC * 0.65, ySS * 0.65, cv.BORDER_DEFAULT);
+  } else {
+    yDst.copyTo(yDst2);
   }
 
-  onProgress?.(70);
-  // Fine residual NLM with small search — kills remaining high-freq grain, keeps edges
-  const residual = new Float32Array(px);
-  for (let i = 0; i < px; i++) residual[i] = yPlane[i] - up[i];
-  const resClean = nlmLuma(residual, w, h, hParam * 0.55, 5, 9, (p) =>
-    onProgress?.(70 + p * 0.25)
-  );
-  const out = new Float32Array(px);
-  for (let i = 0; i < px; i++) out[i] = clamp(up[i] + resClean[i], 0, 255);
-  onProgress?.(100);
-  return out;
+  onProgress?.(65);
+  const crDst = new cv.Mat();
+  const cbDst = new cv.Mat();
+  const chromaD = 5;
+  const chromaSC = Math.max(8, sc * 0.28);
+  const chromaSS = Math.max(3, ss * 0.35);
+  cv.bilateralFilter(crMat, crDst, chromaD, chromaSC, chromaSS, cv.BORDER_DEFAULT);
+  cv.bilateralFilter(cbMat, cbDst, chromaD, chromaSC, chromaSS, cv.BORDER_DEFAULT);
+
+  onProgress?.(78);
+  const mergedCh = new cv.MatVector();
+  mergedCh.push_back(yDst2);
+  mergedCh.push_back(crDst);
+  mergedCh.push_back(cbDst);
+  const merged = new cv.Mat();
+  cv.merge(mergedCh, merged);
+  const rgbFromY = new cv.Mat();
+  cv.cvtColor(merged, rgbFromY, cv.COLOR_YCrCb2RGB);
+
+  onProgress?.(88);
+  const dFinish = odd(Math.max(3, (d / 2) | 0), 3, 9);
+  cv.bilateralFilter(rgbFromY, dst, dFinish, sc * 0.55, ss * 0.55, cv.BORDER_DEFAULT);
+
+  ycrcb.delete();
+  channels.delete();
+  yMat.delete();
+  crMat.delete();
+  cbMat.delete();
+  yDst.delete();
+  yDst2.delete();
+  crDst.delete();
+  cbDst.delete();
+  mergedCh.delete();
+  merged.delete();
+  rgbFromY.delete();
+  onProgress?.(95);
 }
 
 function applyOpenCV(cv, srcMat, controls, params, onProgress) {
@@ -341,68 +474,29 @@ function applyOpenCV(cv, srcMat, controls, params, onProgress) {
     return dst;
   }
 
-  // hybrid (default) and nlm — luminance NLM + chroma protect + light bilateral finish
+  // hybrid / nlm
   onProgress?.(8);
-  const ycrcb = new cv.Mat();
-  cv.cvtColor(srcMat, ycrcb, cv.COLOR_RGB2YCrCb);
-  const channels = new cv.MatVector();
-  cv.split(ycrcb, channels);
-  const yMat = channels.get(0);
-  const crMat = channels.get(1);
-  const cbMat = channels.get(2);
-
-  // Y as float plane
-  const w = yMat.cols;
-  const h = yMat.rows;
-  const yPlane = new Float32Array(w * h);
-  const yData = yMat.data;
-  for (let i = 0; i < yPlane.length; i++) yPlane[i] = yData[i];
-
-  onProgress?.(12);
-  const useStrongNlm = algo === "nlm";
-  const yClean = nlmLumaMultiscale(
-    yPlane,
-    w,
-    h,
-    useStrongNlm ? hNlm * 1.1 : hNlm,
-    useStrongNlm ? tw : 7,
-    useStrongNlm ? sw : 15,
-    (p) => onProgress?.(12 + p * 0.55)
-  );
-
-  // Write cleaned Y back
-  for (let i = 0; i < yClean.length; i++) {
-    yData[i] = clamp(yClean[i] + 0.5, 0, 255);
+  if (algo === "nlm") {
+    // Prefer native OpenCV NLM when available; otherwise strong hybrid bilateral
+    const used = tryOpenCvNlm(cv, srcMat, dst, hNlm, tw, sw);
+    if (used) {
+      onProgress?.(70);
+      const finish = new cv.Mat();
+      const d2 = odd(Math.max(3, (d / 2) | 0), 3, 9);
+      cv.bilateralFilter(dst, finish, d2, sc * 0.5, ss * 0.5, cv.BORDER_DEFAULT);
+      finish.copyTo(dst);
+      finish.delete();
+      onProgress?.(90);
+    } else {
+      applyHybridFast(cv, srcMat, dst, d, sc * 1.2, ss * 1.15, true, onProgress);
+    }
+  } else {
+    // hybrid default — fast OpenCV bilateral stack (quality without JS NLM timeout)
+    applyHybridFast(cv, srcMat, dst, d, sc, ss, false, onProgress);
   }
 
-  // Very light chroma bilateral to kill color noise without smearing
-  onProgress?.(72);
-  const crDst = new cv.Mat();
-  const cbDst = new cv.Mat();
-  const chromaD = 5;
-  const chromaSC = Math.max(8, sc * 0.25);
-  const chromaSS = Math.max(3, ss * 0.35);
-  cv.bilateralFilter(crMat, crDst, chromaD, chromaSC, chromaSS, cv.BORDER_DEFAULT);
-  cv.bilateralFilter(cbMat, cbDst, chromaD, chromaSC, chromaSS, cv.BORDER_DEFAULT);
-
-  // Merge Y + lightly filtered chroma
-  const mergedCh = new cv.MatVector();
-  mergedCh.push_back(yMat);
-  mergedCh.push_back(crDst);
-  mergedCh.push_back(cbDst);
-  const merged = new cv.Mat();
-  cv.merge(mergedCh, merged);
-  const rgbFromY = new cv.Mat();
-  cv.cvtColor(merged, rgbFromY, cv.COLOR_YCrCb2RGB);
-
-  // Light bilateral finish (matches server hybrid's second stage)
-  onProgress?.(82);
-  const d2 = odd(Math.max(3, (d / 2) | 0), 3, 9);
-  cv.bilateralFilter(rgbFromY, dst, d2, sc * 0.55, ss * 0.55, cv.BORDER_DEFAULT);
-
-  // Strength blend with original — exact server semantics
-  // out = dst * blend + src * (1 - blend)
-  onProgress?.(90);
+  // Strength blend with original — server semantics: out = dst*blend + src*(1-blend)
+  onProgress?.(92);
   if (blend < 0.999) {
     const blended = new cv.Mat();
     const a = new cv.Mat();
@@ -415,18 +509,6 @@ function applyOpenCV(cv, srcMat, controls, params, onProgress) {
     b.delete();
     blended.delete();
   }
-
-  // cleanup
-  ycrcb.delete();
-  channels.delete();
-  yMat.delete();
-  crMat.delete();
-  cbMat.delete();
-  crDst.delete();
-  cbDst.delete();
-  mergedCh.delete();
-  merged.delete();
-  rgbFromY.delete();
 
   onProgress?.(95);
   return dst;
@@ -673,13 +755,16 @@ async function encodeJpeg(rgba, w, h, quality) {
 
 async function runDenoise(msg) {
   const { id, controls } = msg;
-  progress(id, 1, "Loading high-quality denoise engine…");
-  const cv = await loadOpenCV();
+  progress(id, 2, "Loading high-quality denoise engine…");
+  // loadOpenCV reports ~2–35%; then image prep continues from 38%
+  const cv = await loadOpenCV((p, label) => {
+    progress(id, Math.max(2, Math.min(35, p || 2)), label || "Loading denoise engine…");
+  });
   if (!cv || typeof cv.bilateralFilter !== "function") {
     throw new Error("OpenCV denoise engine failed to initialize");
   }
 
-  progress(id, 4, "Preparing image…");
+  progress(id, 38, "Preparing image…");
   let bitmap = msg.bitmap;
   if (!bitmap && msg.buffer) {
     bitmap = await createImageBitmap(
@@ -688,8 +773,8 @@ async function runDenoise(msg) {
   }
   if (!bitmap) throw new Error("No image data");
 
-  // Quality-first: allow larger working size (closer to server max 4000)
-  const maxSide = msg.maxProcessSide || 3600;
+  // Cap working resolution so browser denoise finishes in seconds
+  const maxSide = msg.maxProcessSide || 1280;
   const { imageData, processScale, fullW, fullH } = await imageDataFromBitmap(
     bitmap,
     maxSide
@@ -698,7 +783,7 @@ async function runDenoise(msg) {
 
   const w = imageData.width;
   const h = imageData.height;
-  progress(id, 8, "Tuning filter strength…");
+  progress(id, 42, "Tuning filter strength…");
 
   const effective = clamp(controls.strength_pct ?? 50, 0, 100);
   // If category targets set, nudge strength (cheap search with residual proxy later skipped for speed)
@@ -735,12 +820,14 @@ async function runDenoise(msg) {
   } else {
     progress(
       id,
-      10,
+      45,
       `Denoising with ${controls.algorithm || "hybrid"} (detail-preserving)…`
     );
-    outMat = applyOpenCV(cv, srcMat, controls, params, (p) =>
-      progress(id, Math.min(92, p), "Removing noise, keeping detail…")
-    );
+    outMat = applyOpenCV(cv, srcMat, controls, params, (p) => {
+      // applyOpenCV reports 0–100; map into 45–90 of overall job
+      const overall = 45 + (Math.max(0, Math.min(100, p || 0)) / 100) * 45;
+      progress(id, Math.min(90, overall), "Removing noise, keeping detail…");
+    });
   }
 
   applyPhotometricMat(cv, outMat, controls);
@@ -862,16 +949,13 @@ self.onmessage = async (ev) => {
     if (msg.type === "denoise") await runDenoise(msg);
     else if (msg.type === "analyze") await runAnalyze(msg);
     else if (msg.type === "ping") {
-      try {
-        await loadOpenCV();
-        self.postMessage({
-          type: "pong",
-          id: msg.id,
-          opencv: !!(_cv && typeof _cv.bilateralFilter === "function"),
-        });
-      } catch (e) {
-        self.postMessage({ type: "pong", id: msg.id, opencv: false, error: String(e) });
-      }
+      // Do NOT load OpenCV here — that blocked the worker queue and caused
+      // denoise jobs to sit idle until the client timed out.
+      self.postMessage({
+        type: "pong",
+        id: msg.id,
+        opencv: !!(_cv && typeof _cv.bilateralFilter === "function"),
+      });
     } else throw new Error(`Unknown message ${msg.type}`);
   } catch (err) {
     self.postMessage({

@@ -49,6 +49,13 @@
     errorLogBadge: $("#errorLogBadge"),
     status: $("#status"),
     statusText: $("#statusText"),
+    topStatusBar: $("#topStatusBar"),
+    topStatusText: $("#topStatusText"),
+    topStatusSpinner: $("#topStatusSpinner"),
+    topStatusProgress: $("#topStatusProgress"),
+    topStatusFill: $("#topStatusFill"),
+    topStatusPct: $("#topStatusPct"),
+    topStatusTrack: $("#topStatusTrack"),
     healthBadge: $("#healthBadge"),
     cacheBadge: $("#cacheBadge"),
     cacheMeta: $("#cacheMeta"),
@@ -74,15 +81,10 @@
     zoomFit: $("#zoomFit"),
     zoom100: $("#zoom100"),
     btnDenoise: $("#btnDenoise"),
+    btnStopApply: $("#btnStopApply"),
+    btnStopApplyTop: $("#btnStopApplyTop"),
     applyProgress: $("#applyProgress"),
-    applyProgressLabel: $("#applyProgressLabel"),
-    applyProgressPct: $("#applyProgressPct"),
-    applyProgressFill: $("#applyProgressFill"),
-    applyProgressBar: $("#applyProgressBar"),
     previewProcessing: $("#previewProcessing"),
-    previewProcessingTitle: $("#previewProcessingTitle"),
-    previewProcessingFill: $("#previewProcessingFill"),
-    previewProcessingPct: $("#previewProcessingPct"),
     btnAnalyze: $("#btnAnalyze"),
     btnDownload: $("#btnDownload"),
     btnReset: $("#btnReset"),
@@ -93,12 +95,25 @@
     btnClearHistory: $("#btnClearHistory"),
     btnClearLibrary: $("#btnClearLibrary"),
     btnClearAllCache: $("#btnClearAllCache"),
+    btnNewProject: $("#btnNewProject"),
+    newProjectDialog: $("#newProjectDialog"),
+    newProjectForm: $("#newProjectForm"),
+    newProjectKeepHistory: $("#newProjectKeepHistory"),
+    newProjectRemoveLib: $("#newProjectRemoveLib"),
+    newProjectRemoveLibLabel: $("#newProjectRemoveLibLabel"),
+    newProjectLibHint: $("#newProjectLibHint"),
     toggleAdvanced: $("#toggleAdvanced"),
     advanced: $("#advanced"),
   };
 
   const Store = window.PEStore;
   const Log = window.PELog;
+
+  /** Apply progress / cancel (top status bar) */
+  let _progressTimer = null;
+  let _progressValue = 0;
+  let _applyAbort = null;
+  let _applyRunning = false;
 
   // ── paired range + number controls ──────────────────────────────────
   const pairs = [
@@ -152,7 +167,17 @@
 
   function setStatus(text, mode = "", opts = {}) {
     els.status.className = `status-bar ${mode}`.trim();
-    els.statusText.textContent = text;
+    if (els.statusText) els.statusText.textContent = text;
+    // Mirror into the top-of-page status bar
+    if (els.topStatusText) els.topStatusText.textContent = text;
+    if (els.topStatusBar) {
+      els.topStatusBar.classList.toggle("is-busy", mode === "busy" || _applyRunning);
+      els.topStatusBar.classList.toggle("is-error", mode === "error");
+      els.topStatusBar.classList.toggle("is-warning", mode === "warning");
+    }
+    if (els.topStatusSpinner) {
+      els.topStatusSpinner.hidden = !(mode === "busy" || _applyRunning);
+    }
     if (mode === "error") {
       logIssue("error", opts.source || "app", text, opts.meta);
     } else if (mode === "warning") {
@@ -376,6 +401,22 @@
       state.historyIndex < 0 || state.historyIndex >= state.history.length - 1;
   }
 
+  function hasActiveImage() {
+    return !!(
+      state.sourceUrl ||
+      state.outputUrl ||
+      state.file ||
+      (state.historyIndex >= 0 &&
+        state.history[state.historyIndex] &&
+        isUsableBlob(state.history[state.historyIndex].sourceBlob))
+    );
+  }
+
+  function updateNewProjectButton() {
+    if (!els.btnNewProject) return;
+    els.btnNewProject.disabled = !hasActiveImage();
+  }
+
   // ── Persistence: session / history / library ────────────────────────
   function scheduleSessionSave() {
     if (state._restoring || !Store) return;
@@ -485,16 +526,167 @@
     if (els.btnDownload) els.btnDownload.disabled = true;
     if (els.fileMeta) els.fileMeta.textContent = "No image loaded";
     if (els.jobBadge) els.jobBadge.textContent = "no job";
+    updateNewProjectButton();
     if (message) setStatus(message);
+  }
+
+  /**
+   * Close the current image and prepare for a new project.
+   * @param {{ keepHistory?: boolean, removeFromLibrary?: boolean }} opts
+   */
+  async function startNewProject(opts = {}) {
+    const keepHistory = opts.keepHistory !== false;
+    const removeFromLibrary = !!opts.removeFromLibrary;
+    const libId = state.libraryEntryId;
+
+    // When keeping history, archive current work to the library first so edits
+    // remain available there even after the active project is detached.
+    if (
+      keepHistory &&
+      !removeFromLibrary &&
+      Store &&
+      (state.history.length || state.sourceUrl || state.file)
+    ) {
+      try {
+        await saveToLibrary();
+      } catch {
+        /* offline / no blobs — continue */
+      }
+    }
+
+    if (removeFromLibrary && libId && Store) {
+      const serverId = Store.serverLibraryId ? Store.serverLibraryId(libId) : libId;
+      // Local rows may be stored under scoped or bare ids
+      const localIds = new Set([libId, serverId].filter(Boolean));
+      try {
+        for (const id of localIds) {
+          // eslint-disable-next-line no-await-in-loop
+          await Store.deleteLibraryEntry(id);
+        }
+      } catch {
+        /* continue */
+      }
+      try {
+        await fetch(`/api/library/${serverId}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        });
+      } catch {
+        /* offline */
+      }
+      state.libraryEntryId = null;
+      renderLibraryPanel();
+    } else {
+      // New project gets a new library entry on next save
+      state.libraryEntryId = null;
+    }
+
+    if (!keepHistory) {
+      state.history = [];
+      state.historyIndex = -1;
+      if (Store) await Store.clearHistoryState();
+    } else {
+      // Keep undo steps available in History; none selected until user restores or uploads
+      state.historyIndex = -1;
+    }
+
+    state.projectId = Store ? Store.uid() : String(Date.now());
+    state.jobId = null;
+    state.filename = null;
+    state.sourceMetrics = null;
+    state.report = null;
+    state.view = "source";
+    $$("#viewToggle button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.view === "source")
+    );
+
+    showBlankWorkspace(
+      keepHistory
+        ? "Ready for a new image — edit history kept (History tab)"
+        : "Ready for a new image"
+    );
+    refreshMetrics();
+    updateUndoRedoButtons();
+    renderHistoryPanel();
+    if (Store) {
+      if (keepHistory && state.history.length) {
+        await Store.saveHistoryState({
+          projectId: state.projectId,
+          index: -1,
+          steps: state.history.map((s) => ({
+            id: s.id,
+            at: s.at,
+            label: s.label,
+            summary: s.summary,
+            controls: s.controls,
+            jobId: s.jobId,
+            view: s.view,
+            filename: s.filename,
+            sourceBlob: s.sourceBlob,
+            outputBlob: s.outputBlob || null,
+            sourceMetrics: s.sourceMetrics,
+            reportSummary: s.reportSummary,
+            report: s.report || null,
+          })),
+        });
+      }
+      await Store.clearSession();
+    }
+    setCacheBadge(false, "cache");
+    refreshCacheMeta();
+    updateNewProjectButton();
+
+    const bits = ["Started new project"];
+    if (keepHistory) bits.push("history kept");
+    if (removeFromLibrary) bits.push("removed from library");
+    setStatus(bits.join(" · "));
+  }
+
+  function openNewProjectDialog() {
+    if (!els.newProjectDialog || !hasActiveImage()) return;
+    const inLibrary = !!state.libraryEntryId;
+    if (els.newProjectKeepHistory) els.newProjectKeepHistory.checked = true;
+    if (els.newProjectRemoveLib) {
+      els.newProjectRemoveLib.checked = false;
+      els.newProjectRemoveLib.disabled = !inLibrary;
+    }
+    if (els.newProjectRemoveLibLabel) {
+      els.newProjectRemoveLibLabel.style.opacity = inLibrary ? "" : "0.55";
+    }
+    if (els.newProjectLibHint) els.newProjectLibHint.hidden = inLibrary;
+    if (typeof els.newProjectDialog.showModal === "function") {
+      els.newProjectDialog.showModal();
+    } else {
+      // Fallback for environments without <dialog>
+      const keep = window.confirm(
+        "Start a new project?\n\nOK = keep edit history\nCancel = abort"
+      );
+      if (!keep) return;
+      const removeLib =
+        !!state.libraryEntryId &&
+        window.confirm("Also remove this image from your library?");
+      startNewProject({ keepHistory: true, removeFromLibrary: removeLib }).catch((e) => {
+        setStatus(e.message || String(e), "error");
+      });
+    }
   }
 
   function isUsableBlob(b) {
     return !!(b && typeof b.size === "number" && b.size > 0);
   }
 
+  function isServerJobId(jobId) {
+    // Client-only jobs are tagged local-* and never exist on /api/jobs/*
+    if (!jobId) return false;
+    const id = String(jobId);
+    return !id.startsWith("local-") && !id.startsWith("cached-");
+  }
+
   async function rehydrateStepFromServer(step) {
     if (!step) return step;
     const next = { ...step };
+    // Local pipeline jobs have no server source/output endpoints — skip 404 spam
+    if (!isServerJobId(next.jobId)) return next;
     if (!isUsableBlob(next.sourceBlob) && next.jobId) {
       try {
         const r = await fetchWithRetry(`/api/jobs/${next.jobId}/source`, {
@@ -581,6 +773,7 @@
     refreshMetrics();
     setPreview();
     updateUndoRedoButtons();
+    updateNewProjectButton();
     renderHistoryPanel();
     state._restoring = false;
   }
@@ -988,10 +1181,11 @@
         // Session without full history — try blobs, then job endpoints
         let sourceBlob = isUsableBlob(sess.sourceBlob) ? sess.sourceBlob : null;
         let outputBlob = isUsableBlob(sess.outputBlob) ? sess.outputBlob : null;
-        if (!sourceBlob && sess.jobId) {
+        // Only server job IDs have /api/jobs/{id}/source|output (not local-*)
+        if (!sourceBlob && isServerJobId(sess.jobId)) {
           sourceBlob = await Store.blobFromUrl(`/api/jobs/${sess.jobId}/source`);
         }
-        if (!outputBlob && sess.jobId) {
+        if (!outputBlob && isServerJobId(sess.jobId)) {
           outputBlob = await Store.blobFromUrl(`/api/jobs/${sess.jobId}/output`);
         }
 
@@ -2164,6 +2358,9 @@
       img.removeAttribute("src");
       els.compareBefore.hidden = false;
       els.compareAfter.hidden = false;
+      // Ensure default split + slider handle are visible
+      if (els.compareSlider) els.compareSlider.style.left = "50%";
+      if (els.compareAfter) els.compareAfter.style.clipPath = "inset(0 0 0 50%)";
       const onReady = () => onImageNaturalReady(els.compareBefore);
       els.compareBefore.onload = onReady;
       els.compareAfter.onload = null;
@@ -2245,6 +2442,7 @@
       els.btnAnalyze.disabled = false;
       els.btnDownload.disabled = true;
       els.fileMeta.textContent = `${file.name} · ${fmtBytes(file.size)}`;
+      updateNewProjectButton();
       setUploadProgress(25, "Showing preview…");
       setPreview();
 
@@ -2319,32 +2517,45 @@
     }
   }
 
-  /** Simulated staged progress while waiting on /api/denoise (no server stream yet). */
-  let _progressTimer = null;
-  let _progressValue = 0;
+  /** Apply / denoise progress + cancel */
 
   function setProgressUI(pct, label) {
     const p = Math.max(0, Math.min(100, Math.round(pct)));
     _progressValue = p;
     const fillW = `${p}%`;
-    if (els.applyProgressFill) els.applyProgressFill.style.width = fillW;
-    if (els.applyProgressPct) els.applyProgressPct.textContent = `${p}%`;
-    if (els.applyProgressBar) els.applyProgressBar.setAttribute("aria-valuenow", String(p));
-    if (els.applyProgressLabel && label) els.applyProgressLabel.textContent = label;
-    if (els.previewProcessingFill) els.previewProcessingFill.style.width = fillW;
-    if (els.previewProcessingPct) els.previewProcessingPct.textContent = `${p}%`;
-    if (els.previewProcessingTitle && label) els.previewProcessingTitle.textContent = label;
+    // Top status bar (primary)
+    if (els.topStatusFill) els.topStatusFill.style.width = fillW;
+    if (els.topStatusPct) els.topStatusPct.textContent = `${p}%`;
+    if (els.topStatusTrack) els.topStatusTrack.setAttribute("aria-valuenow", String(p));
+    if (label) {
+      if (els.topStatusText) els.topStatusText.textContent = label;
+      if (els.statusText) els.statusText.textContent = label;
+    }
+    if (els.topStatusProgress) els.topStatusProgress.hidden = false;
+    if (els.topStatusBar) els.topStatusBar.classList.add("is-busy");
+    if (els.topStatusSpinner) els.topStatusSpinner.hidden = false;
+  }
+
+  function setStopButtonsVisible(show) {
+    [els.btnStopApply, els.btnStopApplyTop].forEach((btn) => {
+      if (!btn) return;
+      btn.hidden = !show;
+      btn.disabled = !show;
+    });
   }
 
   function startApplyProgress() {
-    // Progress is driven by the local Web Worker (or server fallback labels).
     if (_progressTimer) {
       clearInterval(_progressTimer);
       _progressTimer = null;
     }
     _progressValue = 0;
-    if (els.applyProgress) els.applyProgress.hidden = false;
-    if (els.previewProcessing) els.previewProcessing.hidden = false;
+    _applyRunning = true;
+    // Never show mid-preview floating progress
+    if (els.previewProcessing) els.previewProcessing.hidden = true;
+    if (els.applyProgress) els.applyProgress.hidden = true;
+    if (els.topStatusProgress) els.topStatusProgress.hidden = false;
+    setStopButtonsVisible(true);
     if (els.btnDenoise) {
       els.btnDenoise.disabled = true;
       els.btnDenoise.classList.add("is-processing");
@@ -2353,7 +2564,7 @@
     }
     if (els.btnAnalyze) els.btnAnalyze.disabled = true;
     setProgressUI(2, "Preparing on this device…");
-    setStatus("Applying filter on this device…", "busy");
+    setStatus("Applying filter… — Stop in the top bar to cancel", "busy");
   }
 
   function stopApplyProgress(success) {
@@ -2361,6 +2572,9 @@
       clearInterval(_progressTimer);
       _progressTimer = null;
     }
+    _applyRunning = false;
+    _applyAbort = null;
+    setStopButtonsVisible(false);
     if (success) {
       setProgressUI(100, "Done");
     }
@@ -2370,25 +2584,50 @@
       els.btnDenoise.disabled = !(state.file || state.jobId || state.sourceUrl);
     }
     if (els.btnAnalyze) els.btnAnalyze.disabled = !state.file;
-    // brief hold at 100% then hide
     const hideDelay = success ? 450 : 0;
     setTimeout(() => {
-      if (els.applyProgress) els.applyProgress.hidden = true;
+      if (_applyRunning) return; // a new apply started
+      if (els.topStatusProgress) els.topStatusProgress.hidden = true;
+      if (els.topStatusFill) els.topStatusFill.style.width = "0%";
+      if (els.topStatusPct) els.topStatusPct.textContent = "0%";
+      if (els.topStatusSpinner) els.topStatusSpinner.hidden = true;
+      if (els.topStatusBar) {
+        els.topStatusBar.classList.remove("is-busy");
+      }
       if (els.previewProcessing) els.previewProcessing.hidden = true;
-      setProgressUI(0, "Processing…");
+      if (els.applyProgress) els.applyProgress.hidden = true;
     }, hideDelay);
   }
 
+  function cancelApply() {
+    if (!_applyRunning) return;
+    const Pipeline = window.PEClientPipeline;
+    if (_applyAbort && !_applyAbort.signal.aborted) {
+      try {
+        _applyAbort.abort();
+      } catch {
+        /* ignore */
+      }
+    }
+    if (Pipeline?.cancelAll) {
+      Pipeline.cancelAll("Stopped by user");
+    }
+    setProgressUI(_progressValue || 0, "Stopping…");
+    setStatus("Stopping filter…", "busy");
+  }
+
   async function runDenoise() {
+    if (_applyRunning) return;
     if (!state.file && !state.sourceUrl && !state.jobId) return;
     startApplyProgress();
     const controls = collectControls();
     const Pipeline = window.PEClientPipeline;
     const algo = controls.algorithm || "hybrid";
     const strength = controls.strength_pct;
+    _applyAbort = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const signal = _applyAbort?.signal;
 
     try {
-      // Resolve source bytes from local state (never wait on server for Apply)
       let sourceBlob = state.file;
       if (!sourceBlob && Store && state.sourceUrl) {
         sourceBlob = await Store.blobFromUrl(state.sourceUrl);
@@ -2401,25 +2640,14 @@
       }
       state.file = sourceBlob instanceof File ? sourceBlob : state.file;
 
-      setProgressUI(8, "Using this device’s CPU…");
+      setProgressUI(3, "Starting denoise engine on this device…");
       let outputBlob = null;
       let report = null;
 
-      if (Pipeline?.isSupported?.()) {
-        const result = await Pipeline.denoiseLocal(sourceBlob, controls, {
-          onProgress: (pct, label) => {
-            setProgressUI(Math.max(_progressValue, pct || 0), label || "Denoising…");
-          },
-          // Quality-first: larger working size (server used up to ~4000)
-          maxProcessSide: 3600,
-        });
-        outputBlob = result.outputBlob;
-        report = result.report;
-      } else {
-        // Rare fallback: server path
-        setProgressUI(15, "Local engine unavailable — using server…");
+      async function denoiseOnServer(label) {
+        setProgressUI(20, label || "Using server denoise…");
         const fd = new FormData();
-        if (state.jobId && !String(state.jobId).startsWith("local-")) {
+        if (state.jobId && isServerJobId(state.jobId)) {
           fd.append("job_id", state.jobId);
         }
         fd.append("file", sourceBlob, state.filename || "image.jpg");
@@ -2434,11 +2662,58 @@
           throw new Error(typeof err.detail === "string" ? err.detail : r.statusText);
         }
         const data = await r.json();
-        report = data.report;
-        outputBlob = await Store.blobFromUrl(data.output_url);
         if (data.job_id) state.jobId = data.job_id;
+        const blob = await Store.blobFromUrl(data.output_url);
+        return { outputBlob: blob, report: data.report, engine: "server" };
       }
 
+      // Prefer local worker; on any non-user failure fall back to server denoise.
+      // (Timeouts must NOT be AbortError — that used to skip server fallback.)
+      let usedEngine = "local";
+      if (Pipeline?.isSupported?.()) {
+        try {
+          const result = await Pipeline.denoiseLocal(sourceBlob, controls, {
+            signal,
+            timeoutMs: 120000,
+            onProgress: (pct, label) => {
+              if (signal?.aborted) return;
+              const raw = Math.max(0, Math.min(100, Number(pct) || 0));
+              const mapped = 3 + (raw / 100) * 90;
+              setProgressUI(mapped, label || "Denoising…");
+            },
+            maxProcessSide: 1280,
+          });
+          outputBlob = result.outputBlob;
+          report = result.report;
+          usedEngine = "local";
+        } catch (localErr) {
+          const userStop =
+            (Pipeline.isAbortError && Pipeline.isAbortError(localErr)) ||
+            (localErr?.name === "AbortError" &&
+              /stop|cancel/i.test(String(localErr.message || "")) &&
+              !/timed?\s*out|stall/i.test(String(localErr.message || "")));
+          if (userStop) throw localErr;
+
+          console.warn("Local denoise failed, trying server:", localErr);
+          setStatus(
+            `Local engine issue — switching to server… (${localErr.message || localErr})`,
+            "busy"
+          );
+          const server = await denoiseOnServer("Using server denoise…");
+          outputBlob = server.outputBlob;
+          report = server.report;
+          usedEngine = "server";
+        }
+      } else {
+        const server = await denoiseOnServer("Using server denoise…");
+        outputBlob = server.outputBlob;
+        report = server.report;
+        usedEngine = "server";
+      }
+
+      if (signal?.aborted) {
+        throw new DOMException("Stopped by user", "AbortError");
+      }
       if (!outputBlob) throw new Error("Filter produced no image.");
 
       setProgressUI(94, "Updating preview…");
@@ -2454,7 +2729,10 @@
       $$("#viewToggle button").forEach((b) =>
         b.classList.toggle("active", b.dataset.view === "compare")
       );
-      els.jobBadge.textContent = "local CPU";
+      els.jobBadge.textContent =
+        usedEngine === "server" || (state.jobId && isServerJobId(state.jobId))
+          ? "server"
+          : "local CPU";
       els.btnDownload.disabled = false;
       els.btnDownload.onclick = () => {
         const a = document.createElement("a");
@@ -2486,13 +2764,20 @@
         reportSummary: briefReportSummary(report),
         report,
       });
-      // Don't block UI on library server sync
       saveToLibrary().catch(() => {});
       stopApplyProgress(true);
       setStatus(`Done · ${summary}`);
     } catch (e) {
+      const aborted =
+        (Pipeline && Pipeline.isAbortError && Pipeline.isAbortError(e)) ||
+        (e && e.name === "AbortError") ||
+        /stopped by user|cancelled/i.test(String(e?.message || e));
       stopApplyProgress(false);
-      setStatus(e.message || String(e), "error", { source: "apply" });
+      if (aborted) {
+        setStatus("Filter stopped. Adjust settings and click Apply when ready.");
+      } else {
+        setStatus(e.message || String(e), "error", { source: "apply" });
+      }
     }
   }
 
@@ -2531,6 +2816,20 @@
   });
 
   els.btnDenoise.addEventListener("click", () => runDenoise());
+  [els.btnStopApply, els.btnStopApplyTop].forEach((btn) => {
+    btn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelApply();
+    });
+  });
+  // Esc cancels an in-flight Apply
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && _applyRunning) {
+      e.preventDefault();
+      cancelApply();
+    }
+  });
   els.btnAnalyze.addEventListener("click", () => {
     if (state.file) analyzeFile(state.file).catch((e) => setStatus(e.message, "error"));
   });
@@ -2768,6 +3067,31 @@
     }
   }
 
+  // Remove image / start new project (preview header)
+  if (els.btnNewProject) {
+    els.btnNewProject.addEventListener("click", () => openNewProjectDialog());
+  }
+  document.getElementById("btnNewProjectCancel")?.addEventListener("click", () => {
+    if (els.newProjectDialog?.open) els.newProjectDialog.close("cancel");
+  });
+  if (els.newProjectForm) {
+    els.newProjectForm.addEventListener("submit", (e) => {
+      // method="dialog" closes the dialog after submit
+      const keepHistory = !!(els.newProjectKeepHistory && els.newProjectKeepHistory.checked);
+      const removeFromLibrary = !!(
+        els.newProjectRemoveLib &&
+        els.newProjectRemoveLib.checked &&
+        !els.newProjectRemoveLib.disabled
+      );
+      // Defer so the dialog finishes closing first
+      setTimeout(() => {
+        runCacheAction("new-project", () =>
+          startNewProject({ keepHistory, removeFromLibrary })
+        );
+      }, 0);
+    });
+  }
+
   // Cache controls
   els.btnSaveSession.addEventListener("click", () =>
     runCacheAction("session", async () => {
@@ -2848,6 +3172,7 @@
       showBlankWorkspace("All caches cleared — ready for a new image");
       refreshMetrics();
       updateUndoRedoButtons();
+      updateNewProjectButton();
       renderHistoryPanel();
       renderLibraryPanel();
       setCacheBadge(false, "cache");
@@ -2923,6 +3248,7 @@
   // Initial zoom UI + resizable metrics panel
   updateZoomUi();
   updateUndoRedoButtons();
+  updateNewProjectButton();
   initMetricsPanelResize();
 
   checkHealth();

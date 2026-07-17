@@ -564,4 +564,85 @@ async def logs_page(ctx: AuthContext | None = Depends(get_optional_auth)) -> Res
     return FileResponse(STATIC / "logs.html")
 
 
+# ── OpenCV vendor assets (must work even if container image is stale) ──
+# A missing wasm used to 404 as JSON {"detail":"Not Found"} which breaks
+# WebAssembly.Module with: expected 00 61 73 6d, found 7b 22 64 65.
+_OPENCV_CDN = (
+    "https://cdn.jsdelivr.net/gh/orangefunguy/PhotoEditor@main/static/vendor"
+)
+
+
+def _serve_vendor_file(name: str, media_type: str) -> Response:
+    local = STATIC / "vendor" / name
+    if local.is_file() and local.stat().st_size > 0:
+        # For wasm, reject non-wasm local files early
+        if name.endswith(".wasm"):
+            head = local.read_bytes()[:4]
+            if head != b"\x00asm":
+                pass  # fall through to CDN
+            else:
+                return FileResponse(
+                    local,
+                    media_type=media_type,
+                    headers={
+                        "Cache-Control": "public, max-age=3600",
+                        "Access-Control-Allow-Origin": "*",
+                    },
+                )
+        else:
+            return FileResponse(
+                local,
+                media_type=media_type,
+                headers={
+                    "Cache-Control": "public, max-age=3600",
+                    "Access-Control-Allow-Origin": "*",
+                },
+            )
+    # Proxy from CDN (origin may lag behind GitHub main)
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"{_OPENCV_CDN}/{name}",
+            headers={"User-Agent": "PhotoEditor-Origin/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
+            data = r.read()
+        if name.endswith(".wasm") and (len(data) < 4 or data[:4] != b"\x00asm"):
+            raise HTTPException(502, "Upstream OpenCV WASM invalid")
+        if name.endswith(".js"):
+            text = data.decode("utf-8", errors="replace")
+            text = text.replace(
+                "let opencvWasmBinaryFile = './opencv.wasm';",
+                "let opencvWasmBinaryFile = '/static/vendor/opencv.wasm';",
+            )
+            text = text.replace(
+                'let opencvWasmBinaryFile = "./opencv.wasm";',
+                "let opencvWasmBinaryFile = '/static/vendor/opencv.wasm';",
+            )
+            data = text.encode("utf-8")
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={
+                "Cache-Control": "public, max-age=300",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"OpenCV asset unavailable: {e}") from e
+
+
+@app.get("/static/vendor/opencv.wasm")
+def opencv_wasm() -> Response:
+    return _serve_vendor_file("opencv.wasm", "application/wasm")
+
+
+@app.get("/static/vendor/opencv.js")
+def opencv_js() -> Response:
+    return _serve_vendor_file("opencv.js", "application/javascript; charset=utf-8")
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")

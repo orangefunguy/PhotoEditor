@@ -13,6 +13,28 @@ PhotoEditor is a single FastAPI service (API + static UI) fronted by a Cloudflar
 
 Traffic: browser → Cloudflare Worker → Render origin. Auth accounts are mirrored to KV so free-tier Render restarts do not wipe logins.
 
+### Edge static / denoise assets
+
+The Worker also serves (or rewrites) critical frontend assets so free-tier origin lag does not break the editor:
+
+| Asset | Why |
+|-------|-----|
+| `/static/vendor/opencv.wasm` (+ `opencv.js`) | On-device denoise; must be real WASM (`\0asm`), not JSON 404 |
+| `/static/js/denoise-worker.js` | Local filter pipeline (fast hybrid; no blocking OpenCV warm-up) |
+| `/static/js/client-pipeline.js` | Embedded known-good pipeline when GitHub main is stale (`worker/embedded-pipeline.js`) |
+| `/static/js/app.js`, tooltips, styles | UX patches (top status bar, Stop, server fallback, new project) |
+| HTML shell | Cache-bust query params; inject top status bar / Stop if origin HTML is old |
+
+Broken Emscripten paths such as `/static/js//static/vendor/opencv.wasm` are rewritten to `/static/vendor/opencv.wasm`.
+
+After Worker changes:
+
+```bash
+npx wrangler deploy
+```
+
+After origin static/backend changes that must live on Render (not only edge): push `main` and redeploy the Render service. See **[CHANGELOG.md](CHANGELOG.md)** for product-facing detail.
+
 ---
 
 ## 1. Prerequisites

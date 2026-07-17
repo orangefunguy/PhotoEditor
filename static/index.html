@@ -10,7 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/css/styles.css?v=20260716d" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=20260716n" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%236ea8fe'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='14' font-family='system-ui' fill='%23061018' font-weight='700'%3EPE%3C/text%3E%3C/svg%3E" />
   </head>
   <body>
     <header class="app-header">
@@ -38,6 +39,30 @@
     <div id="viewAsBar" class="view-as-bar" hidden>
       <span id="viewAsText"></span>
       <button type="button" class="btn" id="btnStopViewAs">Return to my profile</button>
+    </div>
+
+    <!-- Global status + Apply progress (top of page; replaces mid-preview overlay) -->
+    <div class="top-status-bar" id="topStatusBar" aria-live="polite">
+      <div class="top-status-main">
+        <span class="top-status-spinner" id="topStatusSpinner" hidden aria-hidden="true"></span>
+        <span class="top-status-text" id="topStatusText">Ready</span>
+      </div>
+      <div class="top-status-progress" id="topStatusProgress" hidden>
+        <div
+          class="top-status-track"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+          id="topStatusTrack"
+        >
+          <div class="top-status-fill" id="topStatusFill"></div>
+        </div>
+        <span class="top-status-pct" id="topStatusPct">0%</span>
+        <button type="button" class="btn btn-stop top-status-stop" id="btnStopApplyTop" hidden title="Stop filter">
+          Stop
+        </button>
+      </div>
     </div>
 
     <main class="app-shell">
@@ -89,10 +114,10 @@
 
           <p class="section-title" data-tip="strength">Master denoise</p>
           <p class="help-text">
-            Filters run <strong>on this device</strong> with a high-quality pipeline: luminance
-            Non-Local Means + OpenCV bilateral (preserves edges &amp; color while cutting grain).
-            Hybrid is the recommended default. Hover
-            <span class="tip-inline">?</span> for ELI5 tips ·
+            Filters prefer <strong>this device</strong> (OpenCV WASM): hybrid uses edge-preserving
+            bilateral on luminance + light chroma clean. Progress shows in the
+            <strong>top status bar</strong>; Stop / Esc cancels. Server fallback if local fails.
+            Hover <span class="tip-inline">?</span> for ELI5 tips ·
             <a href="/docs#master">full docs</a>
           </p>
 
@@ -245,7 +270,7 @@
             </div>
           </div>
 
-          <div class="btn-row" style="grid-template-columns: 1fr">
+          <div class="btn-row apply-btn-row" style="grid-template-columns: 1fr auto">
             <button
               type="button"
               class="btn btn-primary btn-block"
@@ -255,17 +280,19 @@
             >
               Apply
             </button>
+            <button
+              type="button"
+              class="btn btn-stop"
+              id="btnStopApply"
+              data-tip="stopApply"
+              hidden
+              title="Stop filter"
+            >
+              Stop
+            </button>
           </div>
-          <div class="apply-progress" id="applyProgress" hidden aria-live="polite">
-            <div class="apply-progress-head">
-              <span class="apply-hourglass" aria-hidden="true">⏳</span>
-              <span class="apply-progress-label" id="applyProgressLabel">Processing…</span>
-              <span class="apply-progress-pct" id="applyProgressPct">0%</span>
-            </div>
-            <div class="apply-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="applyProgressBar">
-              <div class="apply-progress-fill" id="applyProgressFill"></div>
-            </div>
-          </div>
+          <!-- Apply progress is shown in the top status bar -->
+          <div class="apply-progress" id="applyProgress" hidden aria-hidden="true"></div>
           <div class="btn-row">
             <button type="button" class="btn btn-block" id="btnAnalyze" data-tip="analyze" disabled>
               Re-analyze
@@ -329,10 +356,22 @@
       <section class="panel preview-panel">
         <div class="panel-header">
           <h2>Preview</h2>
-          <div class="view-toggle" id="viewToggle">
-            <button type="button" data-view="source" class="active">Source</button>
-            <button type="button" data-view="output">Output</button>
-            <button type="button" data-view="compare">Compare</button>
+          <div class="preview-header-actions">
+            <button
+              type="button"
+              class="btn btn-ghost"
+              id="btnNewProject"
+              data-tip="newProject"
+              disabled
+              title="Remove image / start new project"
+            >
+              New project
+            </button>
+            <div class="view-toggle" id="viewToggle">
+              <button type="button" data-view="source" class="active">Source</button>
+              <button type="button" data-view="output">Output</button>
+              <button type="button" data-view="compare">Compare</button>
+            </div>
           </div>
         </div>
         <div class="panel-body">
@@ -359,16 +398,8 @@
             <div class="zoom-meta" id="zoomMeta">Size —</div>
           </div>
           <div class="preview-stage" id="previewStage">
-            <div class="preview-processing" id="previewProcessing" hidden>
-              <div class="preview-processing-card">
-                <div class="preview-processing-hourglass" aria-hidden="true">⏳</div>
-                <div class="preview-processing-title" id="previewProcessingTitle">Applying filter…</div>
-                <div class="preview-processing-track">
-                  <div class="preview-processing-fill" id="previewProcessingFill"></div>
-                </div>
-                <div class="preview-processing-pct" id="previewProcessingPct">0%</div>
-              </div>
-            </div>
+            <!-- Progress is shown in the top status bar (no mid-page overlay) -->
+            <div class="preview-processing" id="previewProcessing" hidden aria-hidden="true"></div>
             <div class="preview-scroll" id="previewScroll">
               <div class="preview-canvas" id="previewCanvas">
                 <div class="single-view" id="singleView">
@@ -443,10 +474,36 @@
       </aside>
     </main>
 
-    <script src="/static/js/store.js?v=20260716d"></script>
-    <script src="/static/js/activity-log.js?v=20260716d"></script>
-    <script src="/static/js/tooltips.js?v=20260716d"></script>
-    <script src="/static/js/client-pipeline.js?v=20260716d"></script>
-    <script src="/static/js/app.js?v=20260716d"></script>
+    <dialog id="newProjectDialog" class="app-dialog" aria-labelledby="newProjectTitle">
+      <form method="dialog" id="newProjectForm" class="app-dialog-form">
+        <h3 id="newProjectTitle">Remove image / start new project</h3>
+        <p class="app-dialog-lead">
+          Clear the current image from the editor so you can work on a new one.
+        </p>
+        <label class="checkbox-row" data-tip="newProjectKeepHistory">
+          <input type="checkbox" id="newProjectKeepHistory" checked />
+          Keep edit history — leave undo steps in the History panel so you can restore past edits
+        </label>
+        <label class="checkbox-row" id="newProjectRemoveLibLabel" data-tip="newProjectRemoveLib">
+          <input type="checkbox" id="newProjectRemoveLib" />
+          Also remove this image from my library
+        </label>
+        <p class="help-text" id="newProjectLibHint" hidden>
+          This image is not in your library, so there is nothing to remove there.
+        </p>
+        <div class="app-dialog-actions">
+          <button type="button" class="btn" id="btnNewProjectCancel">Cancel</button>
+          <button type="submit" value="confirm" class="btn btn-primary" id="btnNewProjectConfirm">
+            Start new project
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/js/store.js?v=20260716n"></script>
+    <script src="/static/js/activity-log.js?v=20260716n"></script>
+    <script src="/static/js/tooltips.js?v=20260716n"></script>
+    <script src="/static/js/client-pipeline.js?v=20260716n"></script>
+    <script src="/static/js/app.js?v=20260716n"></script>
   </body>
 </html>
