@@ -15,6 +15,9 @@ const SNAPSHOT_KEY = "auth:v1:snapshot";
 const ORIGIN_ATTEMPTS = 4;
 const ORIGIN_RETRY_BASE_MS = 1200;
 const ORIGIN_ATTEMPT_TIMEOUT_MS = 18000;
+/** Long-running image denoise / analyze need more than the default proxy timeout. */
+const ORIGIN_DENOISE_TIMEOUT_MS = 120000;
+const ORIGIN_HEAVY_PATHS = ["/api/denoise", "/api/analyze", "/api/library"];
 
 /** Paths that must ship from latest main even if Render deploy lags. */
 const EDGE_STATIC_PREFIXES = [
@@ -836,11 +839,11 @@ async function maybeRewriteIndexHtml(response) {
   // Force latest asset versions (bump when pipeline / wasm load path changes)
   html = html.replace(
     /(\/static\/js\/(?:app|client-pipeline|denoise-worker|tooltips|store|activity-log)\.js)\?v=[^"]+/g,
-    "$1?v=20260716n"
+    "$1?v=20260716p"
   );
   html = html.replace(
     /(\/static\/css\/styles\.css)\?v=[^"]+/g,
-    "$1?v=20260716n"
+    "$1?v=20260716p"
   );
   // Inject Stop control if origin HTML is stale
   if (!html.includes("btnStopApply")) {
@@ -1078,9 +1081,18 @@ async function proxyToOrigin(request, env, incoming) {
   let lastErr = null;
   let lastStatus = 0;
 
-  for (let attempt = 1; attempt <= ORIGIN_ATTEMPTS; attempt++) {
+  const pathOnly = incoming.pathname.split("?")[0];
+  const isHeavy =
+    request.method === "POST" &&
+    ORIGIN_HEAVY_PATHS.some((p) => pathOnly === p || pathOnly.startsWith(p + "/"));
+  // Denoise of even a compressed image can exceed 18s on free-tier cold starts
+  const attemptTimeoutMs = isHeavy ? ORIGIN_DENOISE_TIMEOUT_MS : ORIGIN_ATTEMPT_TIMEOUT_MS;
+  // Fewer retries on huge buffered bodies to stay under Worker CPU/time limits
+  const maxAttempts = isHeavy ? 2 : ORIGIN_ATTEMPTS;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ORIGIN_ATTEMPT_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
     try {
       /** @type {RequestInit} */
       const init = {
@@ -1102,7 +1114,7 @@ async function proxyToOrigin(request, env, incoming) {
       clearTimeout(timer);
 
       // Retry typical cold-start / gateway failures from origin or intermediate
-      if (shouldRetryOrigin(response.status) && attempt < ORIGIN_ATTEMPTS) {
+      if (shouldRetryOrigin(response.status) && attempt < maxAttempts) {
         lastStatus = response.status;
         // Drain body so connection can close cleanly
         try {
@@ -1118,7 +1130,7 @@ async function proxyToOrigin(request, env, incoming) {
     } catch (err) {
       clearTimeout(timer);
       lastErr = err;
-      if (attempt < ORIGIN_ATTEMPTS) {
+      if (attempt < maxAttempts) {
         await sleep(ORIGIN_RETRY_BASE_MS * attempt);
         continue;
       }

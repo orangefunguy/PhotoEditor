@@ -2644,26 +2644,77 @@
       let outputBlob = null;
       let report = null;
 
-      async function denoiseOnServer(label) {
-        setProgressUI(20, label || "Using server denoise…");
-        const fd = new FormData();
-        if (state.jobId && isServerJobId(state.jobId)) {
-          fd.append("job_id", state.jobId);
+      /**
+       * Downscale/recompress before server upload.
+       * Full-resolution files (tens of MB) hit CF/Render 502 / timeouts.
+       */
+      async function compressBlobForServer(blob, maxSide = 2048, quality = 0.88) {
+        try {
+          const bmp = await createImageBitmap(blob);
+          const w0 = bmp.width;
+          const h0 = bmp.height;
+          const long = Math.max(w0, h0);
+          const scale = long > maxSide ? maxSide / long : 1;
+          const w = Math.max(1, Math.round(w0 * scale));
+          const h = Math.max(1, Math.round(h0 * scale));
+          // Skip work if already small enough and under ~4MB
+          if (scale >= 0.999 && blob.size < 4 * 1024 * 1024) {
+            bmp.close?.();
+            return blob;
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(bmp, 0, 0, w, h);
+          bmp.close?.();
+          const out = await new Promise((resolve) =>
+            canvas.toBlob((b) => resolve(b), "image/jpeg", quality)
+          );
+          return out && out.size ? out : blob;
+        } catch (e) {
+          console.warn("compressBlobForServer failed", e);
+          return blob;
         }
-        fd.append("file", sourceBlob, state.filename || "image.jpg");
+      }
+
+      async function denoiseOnServer(label) {
+        setProgressUI(18, label || "Preparing server upload…");
+        // Never re-upload a 30MB+ original through the edge — resize first
+        const uploadBlob = await compressBlobForServer(sourceBlob, 2048, 0.88);
+        setProgressUI(
+          28,
+          `Uploading to server… (${Math.round((uploadBlob.size || 0) / 1024)} KB)`
+        );
+        const fd = new FormData();
+        // Prefer fresh file payload (compressed). job_id alone can miss disk on free-tier restarts.
+        const baseName = (state.filename || "image.jpg").replace(/\.[^.]+$/, "") || "image";
+        fd.append("file", uploadBlob, `${baseName}.jpg`);
         fd.append("controls_json", JSON.stringify(controls));
         const r = await fetchWithRetry(
           "/api/denoise",
           { method: "POST", body: fd },
-          { retries: 2, baseDelayMs: 1000 }
+          { retries: 3, baseDelayMs: 1500 }
         );
         if (!r.ok) {
-          const err = await r.json().catch(() => ({}));
-          throw new Error(typeof err.detail === "string" ? err.detail : r.statusText);
+          let msg = r.statusText || `HTTP ${r.status}`;
+          try {
+            const err = await r.json();
+            if (typeof err.detail === "string") msg = err.detail;
+          } catch {
+            if (r.status === 502 || r.status === 503 || r.status === 504) {
+              msg =
+                "Server is waking up or the upload was too large/slow. Wait a minute and try again, or use a smaller image.";
+            }
+          }
+          throw new Error(msg);
         }
         const data = await r.json();
         if (data.job_id) state.jobId = data.job_id;
-        const blob = await Store.blobFromUrl(data.output_url);
+        setProgressUI(85, "Downloading server result…");
+        const blob =
+          (Store && (await Store.blobFromUrl(data.output_url))) ||
+          (await fetch(data.output_url, { credentials: "same-origin" }).then((x) => x.blob()));
         return { outputBlob: blob, report: data.report, engine: "server" };
       }
 
@@ -2695,14 +2746,40 @@
           if (userStop) throw localErr;
 
           console.warn("Local denoise failed, trying server:", localErr);
-          setStatus(
-            `Local engine issue — switching to server… (${localErr.message || localErr})`,
-            "busy"
-          );
-          const server = await denoiseOnServer("Using server denoise…");
-          outputBlob = server.outputBlob;
-          report = server.report;
-          usedEngine = "server";
+          // Second local attempt: force fast bilateral-only before expensive server upload
+          try {
+            setStatus("Retrying on-device with bilateral…", "busy");
+            const fastControls = { ...controls, algorithm: "bilateral" };
+            const result2 = await Pipeline.denoiseLocal(sourceBlob, fastControls, {
+              signal,
+              timeoutMs: 60000,
+              onProgress: (pct, label) => {
+                if (signal?.aborted) return;
+                const raw = Math.max(0, Math.min(100, Number(pct) || 0));
+                setProgressUI(3 + (raw / 100) * 90, label || "Bilateral denoise…");
+              },
+              maxProcessSide: 1280,
+            });
+            outputBlob = result2.outputBlob;
+            report = result2.report;
+            usedEngine = "local";
+          } catch (localErr2) {
+            if (
+              (Pipeline.isAbortError && Pipeline.isAbortError(localErr2)) ||
+              (localErr2?.name === "AbortError" &&
+                /stop|cancel/i.test(String(localErr2.message || "")))
+            ) {
+              throw localErr2;
+            }
+            setStatus(
+              `On-device failed — uploading compressed image to server…`,
+              "busy"
+            );
+            const server = await denoiseOnServer("Using server denoise…");
+            outputBlob = server.outputBlob;
+            report = server.report;
+            usedEngine = "server";
+          }
         }
       } else {
         const server = await denoiseOnServer("Using server denoise…");

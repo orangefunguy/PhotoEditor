@@ -2,6 +2,14 @@
 
 Notable product and engineering changes. Dates use the project’s working timeline around the on-device denoise and editor UX work.
 
+## 2026-07-17 — Server denoise 502 on large uploads
+
+- Server fallback no longer posts full multi‑tens‑of‑MB originals through Cloudflare → Render.
+- Client **downscales/recompresses** to ~2048px long side JPEG before `POST /api/denoise`.
+- Edge proxy uses a **120s timeout** for `/api/denoise` and `/api/analyze` (was 18s — caused false 502s).
+- On local failure, retries **on-device bilateral** once before server upload.
+- Clearer user message when the origin is cold or the upload is still too heavy.
+
 ## 2026-07 — Editor UX, local denoise reliability, edge asset serving
 
 ### New project / remove image
