@@ -40,12 +40,16 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
+  min-height: 100dvh;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -460,6 +464,137 @@ select {
 
   .metrics-panel .panel-resize-handle {
     display: none;
+  }
+}
+
+/* Mobile / tablet (iPhone Chrome, Safari, modern mobile CPUs) */
+@media (max-width: 900px) {
+  :root {
+    --header-h: 56px;
+    --controls-w: 100%;
+    --metrics-w: 100%;
+  }
+
+  .app-header {
+    height: auto;
+    min-height: var(--header-h);
+    flex-wrap: wrap;
+    padding: 0.55rem max(0.75rem, env(safe-area-inset-right)) 0.55rem
+      max(0.75rem, env(safe-area-inset-left));
+    gap: 0.5rem;
+  }
+
+  .brand p {
+    display: none;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 0.4rem;
+  }
+
+  .header-actions .btn,
+  .history-actions .btn {
+    min-height: 40px;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.8rem;
+  }
+
+  .top-status-bar {
+    top: 0;
+    position: sticky;
+    padding: 0.4rem max(0.75rem, env(safe-area-inset-right)) 0.4rem
+      max(0.75rem, env(safe-area-inset-left));
+  }
+
+  .app-shell {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    padding: 0.65rem max(0.65rem, env(safe-area-inset-right))
+      max(0.85rem, env(safe-area-inset-bottom)) max(0.65rem, env(safe-area-inset-left));
+    min-height: auto;
+  }
+
+  .controls-panel,
+  .preview-panel,
+  .metrics-panel {
+    max-height: none;
+  }
+
+  .preview-panel .panel-body {
+    min-height: 280px;
+  }
+
+  .preview-stage {
+    min-height: 260px;
+    max-height: min(62vh, 520px);
+  }
+
+  .preview-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .view-toggle button {
+    padding: 0.45rem 0.55rem;
+    min-height: 40px;
+  }
+
+  .control-row input[type="number"],
+  input[type="number"],
+  select,
+  .zoom-pct-input {
+    font-size: 16px; /* no iOS focus zoom */
+    min-height: 44px;
+  }
+
+  input[type="range"] {
+    min-height: 28px;
+  }
+
+  .btn {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .dropzone {
+    padding: 1.1rem 0.85rem;
+  }
+
+  /* Prefer content-visibility for offscreen panels on constrained GPUs */
+  .metrics-panel,
+  .controls-panel {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 480px;
+  }
+}
+
+@media (max-width: 480px) {
+  .brand h1 {
+    font-size: 0.95rem;
+  }
+
+  .top-status-text {
+    font-size: 0.78rem;
+  }
+
+  .zoom-controls {
+    gap: 0.25rem;
+  }
+
+  .zoom-btn-wide {
+    min-width: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

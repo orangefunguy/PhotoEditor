@@ -2,6 +2,13 @@
 
 Notable product and engineering changes. Dates use the project’s working timeline around the on-device denoise and editor UX work.
 
+## 2026-07-17 — Mobile login + responsive editor (iPhone Chrome)
+
+- Fix iOS/WebKit **login reload loops**: safe `next` URLs, `location.replace`, post-login session poll before navigating, session “just signed in” grace on the editor.
+- Edge Worker preserves **Set-Cookie** correctly (`getSetCookie`) so session cookies work through Cloudflare on mobile.
+- Login form: 16px inputs (no focus-zoom), 48px tap targets, `viewport-fit=cover`, safe-area padding, password-manager friendly (no status re-fetch while typing).
+- Editor layout: single-column stack under 900px, larger controls, sticky top status bar, reduced-motion support, `100dvh` / overflow fixes for modern mobile CPUs.
+
 ## 2026-07-17 — Precise logs + agent API + account finder
 
 - Error/warning entries now carry **code**, full **detail**, path, and structured **meta** (status, algorithm, stacks, etc.).

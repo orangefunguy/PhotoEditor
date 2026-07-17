@@ -63,6 +63,8 @@ class ViewAsRequest(BaseModel):
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
+    # path=/ + no Domain attribute so iOS Safari/Chrome same-site cookies stick
+    # under the public host (editor.herooflegend.com) through the CF Worker.
     response.set_cookie(
         key=SESSION_COOKIE,
         value=token,

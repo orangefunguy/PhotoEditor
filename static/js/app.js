@@ -3289,16 +3289,55 @@
   // ── Auth bootstrap (session cookie) ──────────────────────────────
   async function initAuth() {
     try {
-      const r = await fetchWithRetry(
-        "/api/auth/status",
-        { credentials: "same-origin" },
-        { retries: 4, baseDelayMs: 900 }
-      );
-      if (!r.ok) throw new Error(`Auth status ${r.status}`);
-      const st = await r.json();
+      // After mobile login, cookie can lag one tick — retry before redirecting
+      let st = null;
+      let lastErr = null;
+      const justSignedIn = (() => {
+        try {
+          const t = Number(sessionStorage.getItem("pe.authJustSignedIn") || 0);
+          return t && Date.now() - t < 15000;
+        } catch {
+          return false;
+        }
+      })();
+      const attempts = justSignedIn ? 8 : 4;
+      for (let i = 1; i <= attempts; i++) {
+        try {
+          const r = await fetch("/api/auth/status", { credentials: "same-origin" });
+          if (r.status === 502 || r.status === 503 || r.status === 504) {
+            lastErr = new Error(`Auth status ${r.status}`);
+            await new Promise((res) => setTimeout(res, 700 * i));
+            continue;
+          }
+          if (!r.ok) throw new Error(`Auth status ${r.status}`);
+          st = await r.json();
+          if (st.authenticated) break;
+          if (justSignedIn && i < attempts) {
+            await new Promise((res) => setTimeout(res, 150 * i));
+            continue;
+          }
+          break;
+        } catch (e) {
+          lastErr = e;
+          if (i < attempts) await new Promise((res) => setTimeout(res, 700 * i));
+        }
+      }
+      if (!st) throw lastErr || new Error("Auth check failed");
       if (!st.authenticated) {
-        location.href = "/login?next=/";
+        try {
+          sessionStorage.removeItem("pe.authJustSignedIn");
+        } catch {
+          /* ignore */
+        }
+        // replace avoids back-button ↔ login reload loops on iOS Chrome
+        const next = encodeURIComponent(location.pathname + location.search || "/");
+        location.replace(`/login?next=${next}&reason=session`);
         return false;
+      }
+      try {
+        sessionStorage.removeItem("pe.authJustSignedIn");
+      } catch {
+        /* ignore */
       }
       const user = st.user;
       const actor = st.actor || user;
@@ -3344,7 +3383,8 @@
       return true;
     } catch (e) {
       console.warn(e);
-      location.href = "/login";
+      // Network blip on mobile: prefer login replace over infinite reload of /
+      location.replace("/login?next=/&reason=session");
       return false;
     }
   }

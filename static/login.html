@@ -2,7 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0c0e12" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <title>PhotoEditor — Sign in</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -10,8 +17,12 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/css/styles.css?v=20260716d" />
-    <link rel="stylesheet" href="/static/css/auth.css?v=20260716d" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=20260717m" />
+    <link rel="stylesheet" href="/static/css/auth.css?v=20260717m" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%236ea8fe'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='14' font-family='system-ui' fill='%23061018' font-weight='700'%3EPE%3C/text%3E%3C/svg%3E"
+    />
   </head>
   <body class="auth-page">
     <div class="auth-card">
@@ -23,16 +34,37 @@
         </div>
       </div>
 
-      <div id="alert" class="auth-alert" hidden></div>
+      <div id="alert" class="auth-alert" hidden role="alert"></div>
 
       <!-- Default: Sign in -->
       <div id="loginPanel">
-        <form id="loginForm" class="auth-form">
-          <label>Email <input type="email" name="email" required autocomplete="username" /></label>
-          <label
+        <form id="loginForm" class="auth-form" method="post" action="#" novalidate>
+          <label for="loginEmail"
+            >Email
+            <input
+              id="loginEmail"
+              type="email"
+              name="email"
+              required
+              autocomplete="username"
+              inputmode="email"
+              enterkeyhint="next"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+          </label>
+          <label for="loginPassword"
             >Password
-            <input type="password" name="password" required autocomplete="current-password"
-          /></label>
+            <input
+              id="loginPassword"
+              type="password"
+              name="password"
+              required
+              autocomplete="current-password"
+              enterkeyhint="go"
+            />
+          </label>
           <button type="submit" class="btn btn-primary btn-block" id="btnSignIn">Sign in</button>
         </form>
         <p class="auth-switch">
@@ -45,29 +77,58 @@
 
       <!-- Sign up: first admin setup OR invite-only notice -->
       <div id="signupPanel" hidden>
-        <form id="setupForm" class="auth-form" hidden>
+        <form id="setupForm" class="auth-form" method="post" action="#" hidden novalidate>
           <p class="auth-lead">
             Create the first workspace <strong>admin</strong> account. After this, teammates join by
             email invite from the Admin page.
           </p>
-          <label>Email <input type="email" name="email" required autocomplete="username" /></label>
-          <label
+          <label for="setupEmail"
+            >Email
+            <input
+              id="setupEmail"
+              type="email"
+              name="email"
+              required
+              autocomplete="username"
+              inputmode="email"
+              autocapitalize="off"
+              spellcheck="false"
+            />
+          </label>
+          <label for="setupFirst"
             >First name
-            <input type="text" name="first_name" required autocomplete="given-name"
-          /></label>
-          <label
+            <input
+              id="setupFirst"
+              type="text"
+              name="first_name"
+              required
+              autocomplete="given-name"
+              enterkeyhint="next"
+            />
+          </label>
+          <label for="setupLast"
             >Last name
-            <input type="text" name="last_name" required autocomplete="family-name"
-          /></label>
-          <label
+            <input
+              id="setupLast"
+              type="text"
+              name="last_name"
+              required
+              autocomplete="family-name"
+              enterkeyhint="next"
+            />
+          </label>
+          <label for="setupPassword"
             >Password
             <input
+              id="setupPassword"
               type="password"
               name="password"
               required
               minlength="10"
               autocomplete="new-password"
-          /></label>
+              enterkeyhint="go"
+            />
+          </label>
           <p class="auth-hint">
             10+ characters with upper, lower, number, and special character.
           </p>
@@ -93,6 +154,6 @@
         </p>
       </div>
     </div>
-    <script src="/static/js/auth-pages.js?v=20260716d"></script>
+    <script src="/static/js/auth-pages.js?v=20260717m"></script>
   </body>
 </html>

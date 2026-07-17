@@ -28,6 +28,10 @@ const EDGE_STATIC_PREFIXES = [
   "/static/js/tooltips.js",
   "/static/css/styles.css",
   "/static/index.html",
+  "/static/login.html",
+  "/static/invite.html",
+  "/static/js/auth-pages.js",
+  "/static/css/auth.css",
 ];
 
 // jsDelivr is more reliable for large binaries (wasm) than raw.githubusercontent
@@ -833,17 +837,17 @@ async function maybeRewriteIndexHtml(response) {
   if (!html.includes("client-pipeline.js")) {
     html = html.replace(
       /(<script src="\/static\/js\/tooltips\.js[^"]*"><\/script>)/,
-      '$1\n    <script src="/static/js/client-pipeline.js?v=20260716n"></script>'
+      '$1\n    <script src="/static/js/client-pipeline.js?v=20260717m"></script>'
     );
   }
   // Force latest asset versions (bump when pipeline / wasm load path changes)
   html = html.replace(
     /(\/static\/js\/(?:app|client-pipeline|denoise-worker|tooltips|store|activity-log)\.js)\?v=[^"]+/g,
-    "$1?v=20260716p"
+    "$1?v=20260717m"
   );
   html = html.replace(
     /(\/static\/css\/styles\.css)\?v=[^"]+/g,
-    "$1?v=20260716p"
+    "$1?v=20260717m"
   );
   // Inject Stop control if origin HTML is stale
   if (!html.includes("btnStopApply")) {
@@ -1225,6 +1229,25 @@ function rewriteOriginResponse(response, originBase, incoming) {
     } catch {
       /* leave Location as-is */
     }
+  }
+
+  // Preserve Set-Cookie correctly (Headers() can fold/drop cookies in Workers).
+  // Critical for mobile Safari/Chrome login sessions through the edge proxy.
+  try {
+    if (typeof response.headers.getSetCookie === "function") {
+      const cookies = response.headers.getSetCookie();
+      if (cookies && cookies.length) {
+        outHeaders.delete("set-cookie");
+        for (const c of cookies) {
+          // Force cookie host to the public edge host (no Domain=render host)
+          let fixed = c;
+          fixed = fixed.replace(/;\s*Domain=[^;]*/gi, "");
+          outHeaders.append("Set-Cookie", fixed);
+        }
+      }
+    }
+  } catch {
+    /* leave cookies as copied */
   }
 
   outHeaders.delete("content-encoding");
