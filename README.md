@@ -11,7 +11,8 @@ PhotoEditor is a local web workbench that:
 
 Repository: [github.com/orangefunguy/PhotoEditor](https://github.com/orangefunguy/PhotoEditor)
 
-Release notes for recent UX and denoise reliability work: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
+Release notes: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.  
+Agent log API (Grok / operators): **[docs/agent-logs.md](docs/agent-logs.md)**.
 
 ---
 

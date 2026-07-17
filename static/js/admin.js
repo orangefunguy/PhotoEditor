@@ -156,13 +156,93 @@
     }
   });
 
+  async function loadApiKeys() {
+    const root = $("#apiKeysList");
+    if (!root) return;
+    try {
+      const data = await api("/api/logs/api-keys");
+      const keys = data.keys || [];
+      if (!keys.length) {
+        root.innerHTML = '<div class="help-text">No agent API keys yet.</div>';
+        return;
+      }
+      root.innerHTML = keys
+        .map((k) => {
+          const revoked = k.revoked ? " · revoked" : "";
+          const used = k.last_used_at
+            ? ` · last used ${new Date(k.last_used_at * 1000).toLocaleString()}`
+            : " · never used";
+          return `<div class="key-row" data-key-id="${escapeHtml(k.id)}">
+            <div>
+              <strong>${escapeHtml(k.name || "Key")}</strong>
+              <div><code>${escapeHtml(k.key_prefix)}…</code>${escapeHtml(revoked)}${escapeHtml(used)}</div>
+            </div>
+            ${
+              k.revoked
+                ? ""
+                : `<button type="button" class="btn" data-revoke="${escapeHtml(k.id)}">Revoke</button>`
+            }
+          </div>`;
+        })
+        .join("");
+      root.querySelectorAll("[data-revoke]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Revoke this agent API key?")) return;
+          await api(`/api/logs/api-keys/${btn.getAttribute("data-revoke")}`, {
+            method: "DELETE",
+          });
+          loadApiKeys();
+        });
+      });
+    } catch (e) {
+      root.textContent = e.message;
+    }
+  }
+
+  $("#apiKeyForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const box = $("#apiKeyResult");
+    try {
+      const data = await api("/api/logs/api-keys", {
+        method: "POST",
+        body: JSON.stringify({ name: fd.get("name") }),
+      });
+      box.hidden = false;
+      box.innerHTML = `<strong>Copy this API key now</strong> (shown once):<br/><code id="newApiKeyValue">${escapeHtml(
+        data.api_key
+      )}</code><br/>
+        <button type="button" class="btn" id="btnCopyApiKey" style="margin-top:0.5rem">Copy</button>
+        <div class="help-text" style="margin-top:0.5rem">${escapeHtml(data.hint || "")}</div>
+        <div class="help-text">Example: <code>curl -H "Authorization: Bearer …" "https://editor.herooflegend.com/api/agent/v1/accounts?q=user@…"</code></div>`;
+      $("#btnCopyApiKey")?.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(data.api_key);
+          $("#btnCopyApiKey").textContent = "Copied";
+        } catch {
+          /* ignore */
+        }
+      });
+      e.target.reset();
+      loadApiKeys();
+    } catch (err) {
+      box.hidden = false;
+      box.textContent = err.message;
+    }
+  });
+
   $("#btnRefresh")?.addEventListener("click", () => loadUsers());
   $("#btnLogout")?.addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" });
     location.href = "/login";
   });
 
-  loadMe().then(loadUsers).catch((e) => {
-    $("#usersTable").textContent = e.message;
-  });
+  loadMe()
+    .then(() => {
+      loadUsers();
+      loadApiKeys();
+    })
+    .catch((e) => {
+      $("#usersTable").textContent = e.message;
+    });
 })();

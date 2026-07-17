@@ -324,6 +324,33 @@
           </div>
         </section>
 
+        <section id="agent-logs">
+          <h2>Agent log API</h2>
+          <div class="docs-card" id="tool-agent-logs">
+            <h3>Errors, warnings &amp; Grok / agent access</h3>
+            <p class="eli5">
+              <strong>ELI5:</strong> When something breaks, the app saves a detailed note for that
+              user. Admins make a secret key so an agent can look up the right person and read those notes.
+            </p>
+            <p>
+              Logs include <code>message</code>, full <code>detail</code>, machine
+              <code>code</code> (e.g. <code>HTTP_502</code>, <code>DENOISE_TIMEOUT</code>),
+              <code>source</code>, path, and structured <code>meta</code>. They sync from the browser
+              to the server so admins and agents are not limited to localStorage.
+            </p>
+            <ul>
+              <li>Admin: create keys under <a href="/admin">Admin → Agent API keys</a></li>
+              <li>Account finder: <code>GET /api/agent/v1/accounts?q=…</code></li>
+              <li>Logs: <code>GET /api/agent/v1/logs?user_id=…</code> (always pass exact user id)</li>
+              <li>Full guide: <code>docs/agent-logs.md</code> in the repository</li>
+            </ul>
+            <p>
+              Auth header: <code>Authorization: Bearer pe_agent_…</code> or
+              <code>X-API-Key</code> / <code>X-PhotoEditor-Agent-Key</code>.
+            </p>
+          </div>
+        </section>
+
         <section id="session">
           <h2>Session, history &amp; library</h2>
           <div class="docs-card" id="tool-session">

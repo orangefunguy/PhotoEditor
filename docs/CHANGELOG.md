@@ -2,6 +2,16 @@
 
 Notable product and engineering changes. Dates use the project’s working timeline around the on-device denoise and editor UX work.
 
+## 2026-07-17 — Precise logs + agent API + account finder
+
+- Error/warning entries now carry **code**, full **detail**, path, and structured **meta** (status, algorithm, stacks, etc.).
+- Logs **sync to the server** per account (SQLite) in addition to localStorage.
+- **Admin account picker** on `/logs` (search email/name/id) with a clear “Reading logs for …” indicator and `user_id`.
+- **Agent API keys** (`pe_agent_…`) managed in Admin; agents call:
+  - `GET /api/agent/v1/accounts?q=` — find account
+  - `GET /api/agent/v1/logs?user_id=` — precise logs for that account
+- Guide: [agent-logs.md](agent-logs.md).
+
 ## 2026-07-17 — Server denoise 502 on large uploads
 
 - Server fallback no longer posts full multi‑tens‑of‑MB originals through Cloudflare → Render.

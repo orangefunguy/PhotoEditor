@@ -113,5 +113,114 @@
   font-size: 0.68rem;
   color: var(--text-dim);
   overflow: auto;
-  max-height: 8rem;
+  max-height: 12rem;
+  white-space: pre-wrap;
+}
+
+.log-code {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--violet);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+}
+
+.log-account {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.log-account code {
+  font-size: 0.68rem;
+  color: var(--accent);
+}
+
+.account-picker {
+  margin-bottom: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.account-picker label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.account-picker input,
+.account-picker select,
+.log-filters input {
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.account-indicator {
+  margin: 0.65rem 0 0.85rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(110, 168, 254, 0.35);
+  background: var(--accent-soft);
+  font-size: 0.78rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.55rem;
+  align-items: center;
+}
+
+.account-chip {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.account-id {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--accent);
+}
+
+.account-email {
+  color: var(--text-muted);
+}
+
+.api-key-box {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(61, 214, 140, 0.4);
+  background: rgba(61, 214, 140, 0.08);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.keys-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.key-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  font-size: 0.82rem;
+}
+
+.key-row code {
+  font-size: 0.72rem;
+  color: var(--text-dim);
 }

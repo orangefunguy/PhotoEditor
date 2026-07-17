@@ -10,9 +10,9 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/css/styles.css?v=20260716d" />
-    <link rel="stylesheet" href="/static/css/auth.css?v=20260716d" />
-    <link rel="stylesheet" href="/static/css/logs.css?v=20260716d" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=20260717a" />
+    <link rel="stylesheet" href="/static/css/auth.css?v=20260717a" />
+    <link rel="stylesheet" href="/static/css/logs.css?v=20260717a" />
   </head>
   <body class="auth-page admin-page logs-page">
     <header class="app-header">
@@ -20,11 +20,12 @@
         <a class="brand-mark" href="/">PE</a>
         <div>
           <h1>Error &amp; warning log</h1>
-          <p id="logSub">Session, cache, and upload issues only</p>
+          <p id="logSub">Precise issues from Apply, upload, session &amp; cache</p>
         </div>
       </div>
       <div class="header-actions">
         <a class="btn" href="/">← Editor</a>
+        <a class="btn" href="/admin" id="adminLogsLink" hidden>Admin / API keys</a>
         <button type="button" class="btn" id="btnRefresh">Refresh</button>
         <button type="button" class="btn btn-ghost" id="btnClearLog">Clear log</button>
       </div>
@@ -38,9 +39,33 @@
         </div>
         <div class="panel-body">
           <p class="help-text">
-            Only <strong>errors</strong> and <strong>warnings</strong> are stored. Successful
-            session/cache actions are not listed.
+            Entries include <strong>code</strong>, full <strong>detail</strong>, path, and meta
+            (status, algorithm, sizes, etc.). Stored per account on the server for admin/agent access.
           </p>
+
+          <div id="accountPicker" class="account-picker" hidden>
+            <p class="section-title" style="margin-top: 0">Account (admin)</p>
+            <p class="help-text">
+              Choose whose logs to read. Agents should use the same
+              <code>user_id</code> with the API key.
+            </p>
+            <label
+              >Find account
+              <input type="search" id="accountSearch" placeholder="email, name, or user id" />
+            </label>
+            <div class="btn-row" style="margin-top: 0.5rem">
+              <button type="button" class="btn btn-block" id="btnFindAccount">Search</button>
+            </div>
+            <label style="margin-top: 0.65rem"
+              >Account
+              <select id="accountSelect">
+                <option value="">My profile</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="accountIndicator" class="account-indicator" hidden></div>
+
           <div class="log-filters">
             <label
               >Level
@@ -60,10 +85,22 @@
                 <option value="library">Library</option>
                 <option value="upload">Upload</option>
                 <option value="apply">Apply</option>
+                <option value="new-project">New project</option>
                 <option value="auth">Auth</option>
                 <option value="app">App</option>
               </select>
             </label>
+            <label
+              >Code
+              <input type="text" id="filterCode" placeholder="e.g. HTTP_502, DENOISE_TIMEOUT" />
+            </label>
+            <label
+              >Search
+              <input type="search" id="filterQ" placeholder="message or detail text" />
+            </label>
+            <button type="button" class="btn btn-block" id="btnSearch" style="margin-top: 0.5rem">
+              Apply filters
+            </button>
           </div>
         </div>
       </section>
@@ -76,7 +113,19 @@
       </section>
     </main>
 
-    <script src="/static/js/activity-log.js?v=20260716d"></script>
-    <script src="/static/js/logs-page.js?v=20260716d"></script>
+    <script src="/static/js/activity-log.js?v=20260717a"></script>
+    <script src="/static/js/logs-page.js?v=20260717a"></script>
+    <script>
+      // Show admin link when actor is admin
+      fetch("/api/auth/status", { credentials: "same-origin" })
+        .then((r) => r.json())
+        .then((st) => {
+          if (st.actor?.is_admin) {
+            const a = document.getElementById("adminLogsLink");
+            if (a) a.hidden = false;
+          }
+        })
+        .catch(() => {});
+    </script>
   </body>
 </html>

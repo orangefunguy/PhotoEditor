@@ -10,8 +10,9 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/css/styles.css?v=20260716d" />
-    <link rel="stylesheet" href="/static/css/auth.css?v=20260716d" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=20260717a" />
+    <link rel="stylesheet" href="/static/css/auth.css?v=20260717a" />
+    <link rel="stylesheet" href="/static/css/logs.css?v=20260717a" />
   </head>
   <body class="auth-page admin-page">
     <header class="app-header">
@@ -63,7 +64,31 @@
           <div id="usersTable" class="users-table">Loading…</div>
         </div>
       </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Agent API keys</h2>
+          <a class="btn" href="/logs">Open logs</a>
+        </div>
+        <div class="panel-body">
+          <p class="help-text">
+            Keys let agents (e.g. Grok) read error/warning logs via HTTP. Create a key, store the
+            secret once, then call the account finder with a search query and load logs by
+            <code>user_id</code>. See <a href="/docs#agent-logs">docs</a> and
+            <code>docs/agent-logs.md</code>.
+          </p>
+          <form id="apiKeyForm" class="auth-form" style="margin: 0">
+            <label
+              >Key name
+              <input type="text" name="name" placeholder="Grok / operator key" required maxlength="120" />
+            </label>
+            <button type="submit" class="btn btn-primary btn-block">Create API key</button>
+          </form>
+          <div id="apiKeyResult" class="api-key-box" hidden></div>
+          <div id="apiKeysList" class="keys-table" style="margin-top: 1rem">Loading keys…</div>
+        </div>
+      </section>
     </main>
-    <script src="/static/js/admin.js?v=20260716d"></script>
+    <script src="/static/js/admin.js?v=20260717a"></script>
   </body>
 </html>

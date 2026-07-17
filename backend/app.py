@@ -29,6 +29,8 @@ from .auth_db import init_db
 from .auth_routes import router as auth_router
 from .denoise import DenoiseControls, denoise_image
 from .email_service import email_status
+from .log_routes import router as log_router
+from . import activity_logs as activity_logs_mod
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "static"
@@ -44,7 +46,7 @@ DISABLE_DOCS = os.getenv("DISABLE_DOCS", "false").lower() in ("1", "true", "yes"
 app = FastAPI(
     title="PhotoEditor",
     description="Technical image analysis and controllable denoise (authenticated)",
-    version="2.1.0",
+    version="2.2.0",
     docs_url=None if DISABLE_DOCS else "/api/docs",
     redoc_url=None if DISABLE_DOCS else "/api/redoc",
     openapi_url=None if DISABLE_DOCS else "/openapi.json",
@@ -62,6 +64,7 @@ if _cors:
     )
 
 app.include_router(auth_router)
+app.include_router(log_router)
 
 # In-memory job index keyed by job_id (also on disk under user dirs)
 _jobs: dict[str, dict[str, Any]] = {}
@@ -87,6 +90,10 @@ def _assert_job_owner(job: dict[str, Any], user_id: str) -> None:
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    try:
+        activity_logs_mod.ensure_log_tables()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[PhotoEditor] activity_logs init: {exc}")
 
 
 @app.get("/api/health")

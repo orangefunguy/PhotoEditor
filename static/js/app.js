@@ -160,8 +160,15 @@
 
   function logIssue(level, source, message, meta) {
     if (!Log) return;
-    if (level === "error") Log.error(source, message, meta);
-    else if (level === "warning") Log.warning(source, message, meta);
+    const rich = {
+      ...(meta && typeof meta === "object" ? meta : {}),
+      path: location.pathname + location.search,
+      href: location.href,
+    };
+    // Prefer explicit code/status from meta
+    if (rich.status != null && !rich.code) rich.code = `HTTP_${rich.status}`;
+    if (level === "error") Log.error(source, message, rich);
+    else if (level === "warning") Log.warning(source, message, rich);
     refreshErrorLogBadge();
   }
 
@@ -2505,10 +2512,13 @@
       hideUploadProgress();
       if (els.dropzone) els.dropzone.removeAttribute("aria-busy");
       logIssue("error", "upload", err.message || "Load failed", {
+        code: err.code || (err.status != null ? `HTTP_${err.status}` : "UPLOAD_FAILED"),
+        detail: err.stack || err.message || String(err),
         filename: file?.name,
         size: file?.size,
+        status: err.status,
       });
-      throw err;
+      throw err
     } finally {
       setTimeout(() => {
         hideUploadProgress();
@@ -2853,7 +2863,18 @@
       if (aborted) {
         setStatus("Filter stopped. Adjust settings and click Apply when ready.");
       } else {
-        setStatus(e.message || String(e), "error", { source: "apply" });
+        setStatus(e.message || String(e), "error", {
+          source: "apply",
+          meta: {
+            code: e?.code || (e?.status != null ? `HTTP_${e.status}` : "APPLY_FAILED"),
+            detail: e?.stack || e?.message || String(e),
+            status: e?.status,
+            algorithm: algo,
+            strength_pct: strength,
+            job_id: state.jobId,
+            filename: state.filename,
+          },
+        });
       }
     }
   }
@@ -3282,7 +3303,13 @@
       const user = st.user;
       const actor = st.actor || user;
       if (Store?.setUserScope) Store.setUserScope(user.id);
-      if (Log?.setUserScope) Log.setUserScope(user.id);
+      if (Log?.setUserScope) {
+        Log.setUserScope(user.id, {
+          email: user.email,
+          display_name: user.display_name,
+        });
+      }
+      if (Log?.setUserProfile) Log.setUserProfile(user);
       refreshErrorLogBadge();
       const userBadge = document.getElementById("userBadge");
       if (userBadge) {
